@@ -1,0 +1,112 @@
+const n=`# 微服务组件笔记
+
+## 分布式与微服务基础
+
+### 常见性能指标
+
+- 响应时间：一次请求从发起到响应的总耗时
+- 并发：同一时间系统处理请求的能力
+- 吞吐量：单位时间内系统能处理的请求数量（QPS/TPS）
+
+### 集群 vs 分布式
+
+- 集群：多台机器干同一件事（同一个模块多实例部署）
+- 分布式：多台机器干不同的事（拆分模块后协作完成一个系统）
+
+演进路径（常见说法）：
+
+单体 -> 垂直化 -> 分布式（RPC）-> SOA -> 微服务
+
+## Dubbo（RPC）
+
+Dubbo 是高性能 Java RPC 框架，典型用于服务治理与服务间调用。
+
+架构示意：
+
+![](dubbo架构.png)
+
+### 依赖引入（示例）
+
+\`\`\`xml
+<dependency>
+  <groupId>org.apache.dubbo</groupId>
+  <artifactId>dubbo-spring-boot-starter</artifactId>
+  <version>3.0.9</version>
+</dependency>
+<dependency>
+  <groupId>com.alibaba.nacos</groupId>
+  <artifactId>nacos-client</artifactId>
+  <version>2.1.0</version>
+</dependency>
+\`\`\`
+
+### 配置示例（片段）
+
+\`\`\`
+dubbo:
+  application:
+    name: demo
+    version: 1.0
+  registry:
+    address: nacos://127.0.0.1:8848
+  protocol:
+    name: dubbo
+    port: -1
+  scan:
+    base-packages: com.example
+\`\`\`
+
+## ZooKeeper（协调服务）
+
+### 数据模型
+
+- 树形目录结构（类似 Unix 目录树）
+- 节点：ZNode，可以有子节点并存储少量数据
+
+节点类型（常见）：
+
+- PERSISTENT：持久化
+- EPHEMERAL：临时
+- PERSISTENT_SEQUENTIAL：持久化顺序
+- EPHEMERAL_SEQUENTIAL：临时顺序
+
+### 服务端命令（示例）
+
+\`\`\`bash
+./zkServer.sh start
+./zkServer.sh status
+./zkServer.sh stop
+./zkServer.sh restart
+\`\`\`
+
+### 客户端命令（示例）
+
+\`\`\`bash
+zkCli.sh -server 127.0.0.1:2181
+create /zk-permanent 123
+get /zk-permanent
+set /zk-permanent 456
+delete /zk-permanent
+deleteall /path
+\`\`\`
+
+### Curator（Java 客户端）
+
+\`\`\`xml
+<dependency>
+  <groupId>org.apache.curator</groupId>
+  <artifactId>curator-recipes</artifactId>
+  <version>4.3.0</version>
+</dependency>
+\`\`\`
+
+\`\`\`java
+CuratorFramework client = CuratorFrameworkFactory.newClient(
+  "127.0.0.1:2181",
+  new ExponentialBackoffRetry(1000, 3)
+);
+client.start();
+client.create().forPath("/test");
+\`\`\`
+
+`;export{n as default};
