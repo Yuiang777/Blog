@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Redirecting...</title>
+    <script type="text/javascript">
+      ;(function (l) {
+        const isGithubIo = /\.github\.io$/i.test(l.hostname)
+        const seg = l.pathname.split('/').filter(Boolean)
+        const repo = isGithubIo && seg.length ? seg[0] : ''
+        const base = repo ? '/' + repo + '/' : '/'
+        const rest = repo ? seg.slice(1).join('/') : seg.join('/')
+        const q = l.search ? l.search.slice(1).replace(/&/g, '~and~') : ''
+        const next = base + '?/' + rest + (q ? '&' + q : '') + l.hash
+        l.replace(next)
+      })(window.location)
+    </script>
+  </head>
+  <body></body>
+</html>
+

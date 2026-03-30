@@ -7,7 +7,7 @@ import './style.css'
 const container = document.getElementById('app')
 const root = createRoot(container)
 root.render(
-  <BrowserRouter>
+  <BrowserRouter basename={import.meta.env.BASE_URL}>
     <App />
   </BrowserRouter>
 )
