@@ -120,6 +120,7 @@ body {
   display: flex;
   align-items: center;
   gap: 20px;
+  min-width: 0;
 }
 .nav-groups {
   display: flex;
@@ -131,6 +132,7 @@ body {
   border: 0;
   box-shadow: none;
   backdrop-filter: none;
+  min-width: 0;
 }
 .nav-link {
   background: transparent;
@@ -750,6 +752,74 @@ body {
   }
   .toc-panel {
     display: none;
+  }
+}
+@media (max-width: 720px) {
+  .top-nav {
+    height: 62px;
+    padding: 0 12px;
+  }
+  .brand-logo {
+    font-size: 18px;
+    gap: 8px;
+  }
+  .right-actions {
+    gap: 10px;
+  }
+  .nav-groups {
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    max-width: calc(100vw - 140px);
+    padding-bottom: 2px;
+  }
+  .nav-groups::-webkit-scrollbar { display: none; }
+  .main-content {
+    padding-top: 92px;
+  }
+  .dropdown-menu.nav-menu {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    top: 68px;
+    max-height: min(70vh, 420px);
+  }
+  .home-container {
+    padding: 26px 14px 44px;
+  }
+  .hero-section {
+    margin-bottom: 34px;
+  }
+  .main-title {
+    font-size: 2.6rem;
+    letter-spacing: 1px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .subtitle {
+    font-size: 1.05rem;
+    letter-spacing: 1px;
+    margin-bottom: 24px;
+  }
+  .slogan-container {
+    padding: 14px;
+    transform: none;
+  }
+  .slogan-text,
+  .slogan-sub {
+    transform: none;
+  }
+  .dashboard-grid,
+  .tech-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 0 12px;
+  }
+  .profile-card,
+  .tech-card {
+    padding: 16px;
   }
 }
 @keyframes rainbow-flow {
