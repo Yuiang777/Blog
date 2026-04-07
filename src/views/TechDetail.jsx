@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
@@ -198,13 +198,16 @@ function TreeNode({ node, activePath, baseTo, openDirs, toggleDir }) {
 export default function TechDetail() {
   const { id, '*': splat } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const isMobileUi = useMemo(() => location.pathname.startsWith('/m/'), [location.pathname])
   const [mdHtml, setMdHtml] = useState('')
   const [loading, setLoading] = useState(false)
   const [openDirs, setOpenDirs] = useState(() => new Set(['Vue', 'java', 'mysql', 'JDBC', 'GO笔记']))
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.location.pathname.startsWith('/m/'))
   const [tocCollapsed, setTocCollapsed] = useState(true)
   const [tocItems, setTocItems] = useState([])
   const [activeTocId, setActiveTocId] = useState('')
+  const [mobileDirOpen, setMobileDirOpen] = useState(false)
   const contentRef = useRef(null)
 
   const docsIndex = useMemo(() => {
@@ -271,7 +274,7 @@ export default function TechDetail() {
 
   const tree = useMemo(() => buildTree(listForCategory.map(i => i.displayPath).sort((a, b) => a.localeCompare(b, 'zh'))), [listForCategory])
 
-  const baseTo = useMemo(() => `/tech/${id}`, [id])
+  const baseTo = useMemo(() => (isMobileUi ? `/m/tech/${id}` : `/tech/${id}`), [id, isMobileUi])
   const activeIndex = useMemo(() => {
     if (!activeDisplayPath) return -1
     return listForCategory.findIndex(i => i.displayPath === activeDisplayPath)
@@ -345,7 +348,7 @@ export default function TechDetail() {
       if (!a) return
       const href = a.getAttribute('href')
       if (!href) return
-      if (!href.startsWith('/tech/')) return
+      if (!href.startsWith('/tech/') && !href.startsWith('/m/tech/')) return
       e.preventDefault()
       navigate(href)
     }
@@ -431,6 +434,24 @@ export default function TechDetail() {
         tocItems.length && tocCollapsed ? 'toc-collapsed' : ''
       ].filter(Boolean).join(' ')}
     >
+      {isMobileUi && (
+        <>
+          <button className="mobile-doc-dir-btn" type="button" onClick={() => setMobileDirOpen(true)}>目录</button>
+          {mobileDirOpen && (
+            <div className="mobile-doc-overlay" onClick={() => setMobileDirOpen(false)}>
+              <div className="mobile-doc-panel" onClick={(e) => e.stopPropagation()}>
+                <div className="mobile-doc-head">
+                  <div className="mobile-doc-title">目录</div>
+                  <button className="mobile-doc-close" type="button" onClick={() => setMobileDirOpen(false)}>×</button>
+                </div>
+                <div className="mobile-doc-tree">
+                  <TreeNode node={tree} activePath={activeDisplayPath} baseTo={baseTo} openDirs={openDirs} toggleDir={toggleDir} />
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
       <aside className={`docs-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="docs-sidebar-header">
           <div className="docs-header-row">

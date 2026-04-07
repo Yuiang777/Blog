@@ -3,6 +3,7 @@ import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { TECH_STACKS } from './constants/techStack'
 import Home from './views/Home.jsx'
 import TechDetail from './views/TechDetail.jsx'
+import MobileHome from './views/MobileHome.jsx'
 
 const DOCS_MD = import.meta.glob('../docs/**/*.md', { query: '?raw', import: 'default' })
 
@@ -482,6 +483,16 @@ export default function App() {
   const [openMenu, setOpenMenu] = useState('')
   const [isDark, setIsDark] = useState(true)
   const canvasRef = useRef(null)
+  const isMobileUi = useMemo(() => location.pathname === '/m' || location.pathname.startsWith('/m/'), [location.pathname])
+  const mobileTitle = useMemo(() => {
+    if (!isMobileUi) return ''
+    if (location.pathname === '/m') return '移动端'
+    const m = location.pathname.match(/^\/m\/tech\/([^/]+)/)
+    if (!m) return '移动端'
+    const id = m[1]
+    const found = TECH_STACKS.find(s => s.id === id)
+    return found?.name || '笔记'
+  }, [isMobileUi, location.pathname])
 
   const currentId = useMemo(() => {
     const path = location.pathname
@@ -595,25 +606,38 @@ export default function App() {
     localStorage.setItem('theme', isDark ? 'dark' : 'light')
   }, [isDark])
 
+  useEffect(() => {
+    if (isMobileUi) document.documentElement.setAttribute('data-ui', 'mobile')
+    else document.documentElement.removeAttribute('data-ui')
+  }, [isMobileUi])
+
   useCanvasParticleEffects(canvasRef)
 
-  const goHome = () => navigate('/')
-  const goCategory = (id) => navigate(`/tech/${id}`)
+  const goHome = () => navigate(isMobileUi ? '/m' : '/')
+  const goCategory = (id) => navigate(isMobileUi ? `/m/tech/${id}` : `/tech/${id}`)
   const closeMenu = () => setOpenMenu('')
   const openOnHover = (id) => setOpenMenu(id)
   const toggleMenu = (id) => setOpenMenu(v => (v === id ? '' : id))
+  const goDoc = (to) => {
+    const next = isMobileUi && to.startsWith('/tech/') ? `/m${to}` : to
+    navigate(next)
+  }
 
   return (
     <div className="tech-blog-app">
       <canvas ref={canvasRef} className="particle-canvas" />
       <div className="bg-glow"></div>
 
+      {!isMobileUi && (
       <nav className="top-nav">
         <div className="brand-logo" onClick={goHome}>
           <span className="neon-text">AppleSheep</span>
         </div>
 
         <div className="right-actions">
+          <button className="mobile-menu-btn" type="button" onClick={() => toggleMenu('mobile')} aria-label="打开菜单">
+            ≡
+          </button>
           <div className="nav-groups" onMouseLeave={closeMenu}>
             <button className="nav-link" onClick={goHome}>
               <span className="nav-icon">⌂</span>
@@ -740,11 +764,69 @@ export default function App() {
           </button>
         </div>
       </nav>
+      )}
+
+      {isMobileUi && (
+        <nav className="m-top-nav">
+          <button className="m-nav-btn" type="button" onClick={() => navigate(-1)} disabled={location.pathname === '/m'}>←</button>
+          <div className="m-nav-title">{mobileTitle}</div>
+          <div className="m-nav-actions">
+            <button className="m-nav-btn" type="button" onClick={() => navigate('/m')}>⌂</button>
+            <button className="m-nav-btn" type="button" onClick={() => setIsDark(v => !v)} title={isDark ? '切换到日间模式' : '切换到夜间模式'}>
+              {isDark ? '☀️' : '🌙'}
+            </button>
+          </div>
+        </nav>
+      )}
+
+      {openMenu === 'mobile' && (
+        <div className="mobile-menu-overlay" onClick={closeMenu}>
+          <div className="mobile-menu-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="mobile-menu-head">
+              <div className="mobile-menu-title">菜单</div>
+              <button className="mobile-menu-close" type="button" onClick={closeMenu} aria-label="关闭菜单">×</button>
+            </div>
+
+            <div className="mobile-menu-section">
+              <button className="mobile-menu-item" type="button" onClick={() => { closeMenu(); goHome() }}>主页</button>
+              <button className="mobile-menu-item" type="button" onClick={() => { closeMenu(); goCategory('frontend') }}>前端</button>
+              <button className="mobile-menu-item" type="button" onClick={() => { closeMenu(); goCategory('backend') }}>后端</button>
+              <button className="mobile-menu-item" type="button" onClick={() => { closeMenu(); goCategory('database') }}>数据矩阵</button>
+              <button className="mobile-menu-item" type="button" onClick={() => { closeMenu(); goCategory('tools') }}>工具</button>
+              <button className="mobile-menu-item" type="button" onClick={() => { closeMenu(); goCategory('other') }}>运维部署</button>
+              <button className="mobile-menu-item" type="button" onClick={() => { closeMenu(); goCategory('projects') }}>项目专栏</button>
+            </div>
+
+            <div className="mobile-menu-divider"></div>
+
+            <div className="mobile-menu-section">
+              <div className="mobile-menu-subtitle">快捷入口</div>
+              {topMenus.frontend.slice(0, 6).map(item => (
+                <button key={item.to} className="mobile-menu-subitem" type="button" onClick={() => { closeMenu(); navigate(item.to) }}>
+                  前端 · {item.label}
+                </button>
+              ))}
+              {topMenus.backend.slice(0, 6).map(item => (
+                <button key={item.to} className="mobile-menu-subitem" type="button" onClick={() => { closeMenu(); navigate(item.to) }}>
+                  后端 · {item.label}
+                </button>
+              ))}
+              {topMenus.database.slice(0, 6).map(item => (
+                <button key={item.to} className="mobile-menu-subitem" type="button" onClick={() => { closeMenu(); navigate(item.to) }}>
+                  数据 · {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="main-content">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/tech/:id/*" element={<TechDetail />} />
+          <Route path="/m" element={<MobileHome topMenus={topMenus} onGoCategory={goCategory} onGoDoc={goDoc} />} />
+          <Route path="/m/tech/:id/*" element={<TechDetail />} />
         </Routes>
       </main>
     </div>
