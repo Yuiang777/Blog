@@ -736,26 +736,19 @@ body {
     grid-template-columns: 1fr;
     gap: 14px;
   }
-  .docs-sidebar {
-    position: relative;
-    top: auto;
-    max-height: none;
-    margin: 0 14px;
-    border-left: 1px solid var(--glass-border);
-    border-radius: 16px;
-  }
-  .docs-tree {
-    max-height: 360px;
-  }
   .docs-content {
     margin: 0 14px;
   }
-  .docs-page.has-toc .docs-content,
-  .docs-page.has-toc.toc-collapsed .docs-content {
-    margin-right: 14px !important;
+  .docs-sidebar {
+    display: none;
   }
   .toc-panel {
     display: none;
+  }
+  .mobile-doc-dir-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 }
 @media (max-width: 720px) {
@@ -921,168 +914,6 @@ body {
   padding: 6px 2px 2px;
 }
 
-.m-top-nav {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 58px;
-  display: grid;
-  grid-template-columns: 54px 1fr auto;
-  align-items: center;
-  padding: 0 10px;
-  background: var(--bg-overlay);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border-color);
-  z-index: 120;
-}
-.m-nav-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-.m-nav-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-primary);
-  cursor: pointer;
-  font-size: 18px;
-  font-weight: 900;
-}
-.m-nav-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-.m-nav-title {
-  text-align: center;
-  font-weight: 900;
-  letter-spacing: 2px;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-[data-ui='mobile'] .main-content {
-  padding-top: 84px;
-}
-[data-ui='mobile'] .top-nav {
-  display: none;
-}
-[data-ui='mobile'] .particle-canvas,
-[data-ui='mobile'] .bg-glow {
-  display: none;
-}
-[data-ui='mobile'] body {
-  overflow-x: hidden;
-}
-
-.m-home {
-  width: 100%;
-  padding: 10px 14px 28px;
-}
-.m-hero {
-  margin: 10px 0 18px;
-  padding: 18px 16px;
-  border-radius: 18px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  backdrop-filter: blur(16px);
-}
-.m-title {
-  font-weight: 900;
-  font-size: 26px;
-  letter-spacing: 2px;
-  color: var(--text-primary);
-}
-.m-subtitle {
-  margin-top: 6px;
-  color: var(--text-secondary);
-  font-weight: 700;
-  letter-spacing: 1px;
-}
-.m-section {
-  margin-top: 14px;
-}
-.m-section-title {
-  font-weight: 900;
-  letter-spacing: 2px;
-  color: var(--text-primary);
-  margin: 0 2px 10px;
-}
-.m-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-}
-.m-card {
-  text-align: left;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-primary);
-  padding: 14px 14px;
-  cursor: pointer;
-}
-.m-card-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 900;
-}
-.m-card-icon {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.05);
-}
-.m-card-desc {
-  margin-top: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
-}
-.m-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.m-list-item {
-  width: 100%;
-  text-align: left;
-  padding: 12px 12px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.02);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-weight: 700;
-}
-.m-list-item:hover {
-  background: rgba(99, 102, 241, 0.12);
-  border-color: rgba(99, 102, 241, 0.28);
-  color: var(--text-primary);
-}
-
-[data-ui='mobile'] .docs-page {
-  grid-template-columns: 1fr;
-  gap: 12px;
-}
-[data-ui='mobile'] .docs-sidebar {
-  display: none;
-}
-[data-ui='mobile'] .docs-content {
-  margin: 0 12px;
-  padding: 14px 14px;
-}
-[data-ui='mobile'] .doc-nav {
-  display: none;
-}
 .mobile-doc-dir-btn {
   position: fixed;
   right: 12px;
@@ -1099,6 +930,7 @@ body {
   cursor: pointer;
   backdrop-filter: blur(16px);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+  display: none;
 }
 .mobile-doc-overlay {
   position: fixed;

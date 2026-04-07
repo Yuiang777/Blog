@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
@@ -198,16 +198,15 @@ function TreeNode({ node, activePath, baseTo, openDirs, toggleDir }) {
 export default function TechDetail() {
   const { id, '*': splat } = useParams()
   const navigate = useNavigate()
-  const location = useLocation()
-  const isMobileUi = useMemo(() => location.pathname.startsWith('/m/'), [location.pathname])
   const [mdHtml, setMdHtml] = useState('')
   const [loading, setLoading] = useState(false)
   const [openDirs, setOpenDirs] = useState(() => new Set(['Vue', 'java', 'mysql', 'JDBC', 'GO笔记']))
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.location.pathname.startsWith('/m/'))
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [tocCollapsed, setTocCollapsed] = useState(true)
   const [tocItems, setTocItems] = useState([])
   const [activeTocId, setActiveTocId] = useState('')
   const [mobileDirOpen, setMobileDirOpen] = useState(false)
+  const [isNarrow, setIsNarrow] = useState(false)
   const contentRef = useRef(null)
 
   const docsIndex = useMemo(() => {
@@ -274,7 +273,7 @@ export default function TechDetail() {
 
   const tree = useMemo(() => buildTree(listForCategory.map(i => i.displayPath).sort((a, b) => a.localeCompare(b, 'zh'))), [listForCategory])
 
-  const baseTo = useMemo(() => (isMobileUi ? `/m/tech/${id}` : `/tech/${id}`), [id, isMobileUi])
+  const baseTo = useMemo(() => `/tech/${id}`, [id])
   const activeIndex = useMemo(() => {
     if (!activeDisplayPath) return -1
     return listForCategory.findIndex(i => i.displayPath === activeDisplayPath)
@@ -290,6 +289,19 @@ export default function TechDetail() {
       return next
     })
   }
+
+  useEffect(() => {
+    const mq = window.matchMedia?.('(max-width: 980px)')
+    if (!mq) return
+    const sync = () => setIsNarrow(mq.matches)
+    sync()
+    if (mq.addEventListener) mq.addEventListener('change', sync)
+    else mq.addListener(sync)
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener('change', sync)
+      else mq.removeListener(sync)
+    }
+  }, [])
 
   useEffect(() => {
     if (!activeDisplayPath) {
@@ -348,7 +360,7 @@ export default function TechDetail() {
       if (!a) return
       const href = a.getAttribute('href')
       if (!href) return
-      if (!href.startsWith('/tech/') && !href.startsWith('/m/tech/')) return
+      if (!href.startsWith('/tech/')) return
       e.preventDefault()
       navigate(href)
     }
@@ -434,7 +446,7 @@ export default function TechDetail() {
         tocItems.length && tocCollapsed ? 'toc-collapsed' : ''
       ].filter(Boolean).join(' ')}
     >
-      {isMobileUi && (
+      {isNarrow && (
         <>
           <button className="mobile-doc-dir-btn" type="button" onClick={() => setMobileDirOpen(true)}>目录</button>
           {mobileDirOpen && (
