@@ -14,6 +14,7 @@ import {
   Wrench
 } from 'lucide-react'
 import { TECH_STACKS } from '../constants/techStack'
+import mysqlArchitecture from '../../docs/数据矩阵/mysql/进阶/images/mysql体系结构.png'
 
 const DOCS_MD = import.meta.glob('../../docs/**/*.md', { query: '?raw', import: 'default' })
 
@@ -109,33 +110,22 @@ export default function Home() {
 
   return (
     <div className="home-container">
-      <section className="home-hero">
+      <section className="home-hero" aria-labelledby="home-title">
+        <img className="hero-media" src={mysqlArchitecture} alt="MySQL 体系结构笔记图" />
+        <div className="hero-overlay" aria-hidden="true" />
         <div className="hero-copy">
-          <span className="eyebrow"><Sparkles size={15} /> AppleSheep Knowledge Garden</span>
-          <h1>让每一篇笔记，都成为下一次解决问题的起点。</h1>
-          <p>一个持续整理中的个人技术花园。从基础知识到项目复盘，用清晰路径代替零散收藏。</p>
+          <span className="eyebrow hero-eyebrow"><Sparkles size={15} /> Personal knowledge system</span>
+          <h1 id="home-title">AppleSheep</h1>
+          <p>把零散记录整理成可以持续阅读、实践和复盘的技术档案。</p>
           <div className="hero-actions">
             <button className="primary-action" type="button" onClick={() => navigate('/tech/frontend')}>开始学习 <ArrowRight size={17} /></button>
             <button className="secondary-action" type="button" onClick={() => navigate('/tech/projects')}>浏览项目专栏</button>
           </div>
         </div>
-
-        <div className="hero-visual" aria-label="知识库概览">
-          <div className="visual-window-bar">
-            <span></span><span></span><span></span>
-            <small>learning-path.md</small>
-          </div>
-          <div className="visual-path">
-            <span className="visual-line-number">01</span><span>基础知识</span>
-            <span className="visual-line-number">02</span><span>动手实践</span>
-            <span className="visual-line-number">03</span><span>项目复盘</span>
-            <span className="visual-line-number">04</span><span>持续迭代</span>
-          </div>
-          <div className="visual-stat-row">
-            <div><strong>{stats.total}</strong><span>篇笔记</span></div>
-            <div><strong>{stats.projects}</strong><span>篇项目记录</span></div>
-            <div><strong>{TECH_STACKS.length}</strong><span>个学习方向</span></div>
-          </div>
+        <div className="hero-stats" aria-label="知识库统计">
+          <div><strong>{String(stats.total).padStart(2, '0')}</strong><span>Notes</span></div>
+          <div><strong>{String(stats.projects).padStart(2, '0')}</strong><span>Projects</span></div>
+          <div><strong>{String(TECH_STACKS.length).padStart(2, '0')}</strong><span>Tracks</span></div>
         </div>
       </section>
 
@@ -148,12 +138,13 @@ export default function Home() {
           <p>每个方向都从基础开始，并为项目实践和后续复盘预留位置。</p>
         </div>
         <div className="tech-grid">
-          {TECH_STACKS.map(tech => {
+          {TECH_STACKS.map((tech, index) => {
             const meta = CATEGORY_META[tech.id]
             const CategoryIcon = meta.icon
             return (
               <button className={`tech-card accent-${meta.tone}`} key={tech.id} type="button" onClick={() => navigate(`/tech/${tech.id}`)}>
                 <div className="tech-card-head"><span>{meta.label}</span><span>{stats.counts[tech.id] || 0} 篇</span></div>
+                <span className="track-index">{String(index + 1).padStart(2, '0')}</span>
                 <div className="tech-icon"><CategoryIcon size={28} strokeWidth={1.7} /></div>
                 <h3>{tech.name}</h3>
                 <p>{tech.description}</p>
