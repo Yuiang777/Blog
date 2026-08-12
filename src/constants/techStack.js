@@ -2,25 +2,25 @@ export const TECH_STACKS = [
   {
     id: 'frontend',
     name: '前端核心',
-    description: 'React, Vite, Tailwind CSS, Three.js 等现代前端技术栈深度解析',
+    description: 'HTML、CSS、JavaScript、Vue 与工程化实践',
     icon: '⚡'
   },
   {
     id: 'backend',
     name: '后端架构',
-    description: 'Node.js, Java, Go 高并发分布式系统设计与实现',
+    description: 'Java、Spring Boot、微服务与 Go 学习笔记',
     icon: '🛠️'
   },
   {
     id: 'database',
     name: '数据矩阵',
-    description: 'MySQL, Redis, MongoDB 核心存储方案与优化',
+    description: 'MySQL、JDBC、MyBatis、Redis 原理与实践',
     icon: '💾'
   },
   {
     id: 'tools',
     name: '效率工具',
-    description: 'Git, VS Code, WebStorm 等开发者必备利器',
+    description: 'Git、FinalShell 与高频开发工作流',
     icon: '🔧'
   },
   {
@@ -32,7 +32,7 @@ export const TECH_STACKS = [
   {
     id: 'other',
     name: '运维部署',
-    description: 'Docker, Nginx, CI/CD 自动化构建与云原生实践',
+    description: 'Linux、Docker 与应用部署实践',
     icon: '🚀'
   }
 ];

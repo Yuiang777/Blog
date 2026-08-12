@@ -1,8 +1,47 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  ChevronRight,
+  ListTree,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  X
+} from 'lucide-react'
 import { marked } from 'marked'
-import hljs from 'highlight.js'
+import hljs from 'highlight.js/lib/core'
+import bash from 'highlight.js/lib/languages/bash'
+import dockerfile from 'highlight.js/lib/languages/dockerfile'
+import go from 'highlight.js/lib/languages/go'
+import java from 'highlight.js/lib/languages/java'
+import javascript from 'highlight.js/lib/languages/javascript'
+import lua from 'highlight.js/lib/languages/lua'
+import markdown from 'highlight.js/lib/languages/markdown'
+import properties from 'highlight.js/lib/languages/properties'
+import sql from 'highlight.js/lib/languages/sql'
+import xml from 'highlight.js/lib/languages/xml'
+import yaml from 'highlight.js/lib/languages/yaml'
 import 'highlight.js/styles/atom-one-dark.css'
+
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('dockerfile', dockerfile)
+hljs.registerLanguage('go', go)
+hljs.registerLanguage('java', java)
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('js', javascript)
+hljs.registerLanguage('lua', lua)
+hljs.registerLanguage('markdown', markdown)
+hljs.registerLanguage('properties', properties)
+hljs.registerLanguage('sql', sql)
+hljs.registerLanguage('mysql', sql)
+hljs.registerLanguage('html', xml)
+hljs.registerLanguage('xml', xml)
+hljs.registerLanguage('vue', xml)
+hljs.registerLanguage('yaml', yaml)
+hljs.registerLanguage('yml', yaml)
 
 marked.setOptions({
   highlight: (code, lang) => {
@@ -18,6 +57,41 @@ marked.setOptions({
 const DOCS_MD = import.meta.glob('../../docs/**/*.md', { query: '?raw', import: 'default' })
 const DOCS_IMG = import.meta.glob('../../docs/**/*.{png,jpg,jpeg,gif,svg,webp}', { eager: true, import: 'default' })
 
+const CATEGORY_START_PATHS = {
+  frontend: ['前端开发.md'],
+  backend: ['Java开发.md', 'SpringBoot开发.md', 'Go开发.md', 'JavaAI应用.md', '微服务.md'],
+  database: ['MySQL.md', 'Java数据访问.md', 'Redis.md', '消息队列.md'],
+  tools: ['Git.md', '远程终端.md'],
+  projects: ['大型营销服务.md', '苍穹外卖.md', '部门管理系统.md'],
+  other: ['Linux与Docker.md']
+}
+
+function resolveLegacyDisplayPath(categoryId, oldPath) {
+  if (!oldPath) return ''
+  if (categoryId === 'frontend') return '前端开发.md'
+  if (categoryId === 'backend') {
+    if (/GO笔记|Go/i.test(oldPath)) return 'Go开发.md'
+    if (/SpringBoot|Spring容器/.test(oldPath)) return 'SpringBoot开发.md'
+    if (/AI|stream流/.test(oldPath)) return 'JavaAI应用.md'
+    if (/微服务/.test(oldPath)) return '微服务.md'
+    return 'Java开发.md'
+  }
+  if (categoryId === 'database') {
+    if (/JDBC|Mybatis|MyBatis|PageHelper/.test(oldPath)) return 'Java数据访问.md'
+    if (/Redis/.test(oldPath)) return 'Redis.md'
+    if (/消息队列|Kafka/.test(oldPath)) return '消息队列.md'
+    return 'MySQL.md'
+  }
+  if (categoryId === 'tools') return /Git/.test(oldPath) ? 'Git.md' : '远程终端.md'
+  if (categoryId === 'projects') {
+    if (/苍穹外卖/.test(oldPath)) return '苍穹外卖.md'
+    if (/部门管理系统/.test(oldPath)) return '部门管理系统.md'
+    return '大型营销服务.md'
+  }
+  if (categoryId === 'other') return 'Linux与Docker.md'
+  return oldPath
+}
+
 function normalizePath(p) {
   const parts = p.replace(/\\/g, '/').split('/')
   const out = []
@@ -30,7 +104,7 @@ function normalizePath(p) {
 }
 
 function encodeDocPath(docKey) {
-  return docKey.split('/').map(encodeURIComponent).join('/')
+  return docKey.replace(/\.md$/i, '').split('/').map(encodeURIComponent).join('/')
 }
 
 function decodeDocPath(pathnamePart) {
@@ -77,7 +151,13 @@ function createResolver({ imageMap, imageBasenameMap, docModuleKeyByDocKey, cate
     const raw = href.replace(/\\/g, '/')
     if (isExternalUrl(raw) || raw.startsWith('#')) return href
 
-    const clean = raw.split('#')[0].split('?')[0]
+    const encodedPath = raw.split('#')[0].split('?')[0]
+    let clean = encodedPath
+    try {
+      clean = decodeURI(encodedPath)
+    } catch {
+      // Keep malformed legacy paths readable instead of failing the article render.
+    }
     const moduleKey = docModuleKeyByDocKey.get(docKey)
     if (!moduleKey) return href
 
@@ -145,27 +225,30 @@ function renderMarkdown(mdText, docKey, resolver) {
     const rawHref = String(t0.href || '')
     const resolved = resolver.resolveDocLink(docKey, rawHref)
     const t = t0.title ? ` title="${t0.title}"` : ''
-    if (resolved && resolved.startsWith('/tech/')) return `<a href="${resolved}"${t}>${text}</a>`
+    if (resolved && resolved.startsWith('/tech/')) return `<a href="${resolved}"${t}>${t0.text || ''}</a>`
     const rel = isExternalUrl(rawHref) ? ' rel="noreferrer"' : ''
     const target = isExternalUrl(rawHref) ? ' target="_blank"' : ''
-    return `<a href="${rawHref}"${t}${target}${rel}>${text}</a>`
+    return `<a href="${rawHref}"${t}${target}${rel}>${t0.text || ''}</a>`
   }
-  return marked.parse(mdText, { renderer })
+  return marked
+    .parse(mdText, { renderer })
+    .replace(/<table>/g, '<div class="table-scroll"><table>')
+    .replace(/<\/table>/g, '</table></div>')
 }
 
-function TreeNode({ node, activePath, baseTo, openDirs, toggleDir }) {
+function TreeNode({ node, activePath, baseTo, openDirs, toggleDir, expandAll = false, onNavigate }) {
   if (node.type === 'file') {
     const displayPath = node.file.displayPath
     const active = displayPath === activePath
     const label = node.name.replace(/\.md$/i, '')
     return (
-      <Link className={`docs-item ${active ? 'active' : ''}`} to={`${baseTo}/${encodeDocPath(displayPath)}`}>
+      <Link className={`docs-item ${active ? 'active' : ''}`} to={`${baseTo}/${encodeDocPath(displayPath)}`} onClick={onNavigate}>
         <span className="docs-item-name">{label}</span>
       </Link>
     )
   }
 
-  const isOpen = !node.path || openDirs.has(node.path)
+  const isOpen = expandAll || !node.path || openDirs.has(node.path)
   const children = Array.from(node.children.values()).sort((a, b) => {
     if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
     return a.name.localeCompare(b.name, 'zh')
@@ -175,7 +258,7 @@ function TreeNode({ node, activePath, baseTo, openDirs, toggleDir }) {
     <div className="docs-dir">
       {node.path && (
         <button className="docs-dir-header" onClick={() => toggleDir(node.path)}>
-          <span className={`docs-dir-arrow ${isOpen ? 'open' : ''}`}>▶</span>
+          <ChevronRight className={`docs-dir-arrow ${isOpen ? 'open' : ''}`} size={13} aria-hidden="true" />
           <span className="docs-dir-name">{node.name}</span>
         </button>
       )}
@@ -188,6 +271,8 @@ function TreeNode({ node, activePath, baseTo, openDirs, toggleDir }) {
             baseTo={baseTo}
             openDirs={openDirs}
             toggleDir={toggleDir}
+            expandAll={expandAll}
+            onNavigate={onNavigate}
           />
         ))}
       </div>
@@ -207,6 +292,8 @@ export default function TechDetail() {
   const [activeTocId, setActiveTocId] = useState('')
   const [mobileDirOpen, setMobileDirOpen] = useState(false)
   const [isNarrow, setIsNarrow] = useState(false)
+  const [docFilter, setDocFilter] = useState('')
+  const [readingProgress, setReadingProgress] = useState(0)
   const contentRef = useRef(null)
 
   const docsIndex = useMemo(() => {
@@ -251,7 +338,7 @@ export default function TechDetail() {
     return { categoryPrefix }
   }, [id])
 
-  const activeDisplayPath = useMemo(() => decodeDocPath(splat), [splat])
+  const routeDisplayPath = useMemo(() => decodeDocPath(splat), [splat])
 
   const listForCategory = useMemo(() => {
     const all = Array.from(docsIndex.docModuleKeyByDocKey.keys()).filter(k => !k.includes('/_archive/'))
@@ -265,13 +352,38 @@ export default function TechDetail() {
     return []
   }, [docsIndex, id])
 
+  const activeDisplayPath = useMemo(() => {
+    if (!routeDisplayPath) return ''
+    const exact = listForCategory.find(item => item.displayPath === routeDisplayPath)
+    if (exact) return exact.displayPath
+    const withExtension = `${routeDisplayPath}.md`
+    const extensionMatch = listForCategory.find(item => item.displayPath === withExtension)
+    if (extensionMatch) return extensionMatch.displayPath
+    const legacyPath = resolveLegacyDisplayPath(id, routeDisplayPath)
+    return listForCategory.find(item => item.displayPath === legacyPath)?.displayPath || routeDisplayPath
+  }, [id, listForCategory, routeDisplayPath])
+
+  const visibleDocs = useMemo(() => {
+    const keyword = docFilter.trim().toLowerCase()
+    if (!keyword) return listForCategory
+    return listForCategory.filter(item => item.displayPath.toLowerCase().includes(keyword))
+  }, [docFilter, listForCategory])
+
+  const categoryStartDocs = useMemo(() => {
+    const byPath = new Map(listForCategory.map(item => [item.displayPath, item]))
+    const recommended = (CATEGORY_START_PATHS[id] || []).map(path => byPath.get(path)).filter(Boolean)
+    if (recommended.length >= Math.min(5, listForCategory.length)) return recommended.slice(0, 5)
+    const fallback = listForCategory.filter(item => !recommended.includes(item))
+    return [...recommended, ...fallback].slice(0, 5)
+  }, [id, listForCategory])
+
   const displayToDocKey = useMemo(() => {
     const m = new Map()
     for (const it of listForCategory) m.set(it.displayPath, it.docKey)
     return m
   }, [listForCategory])
 
-  const tree = useMemo(() => buildTree(listForCategory.map(i => i.displayPath).sort((a, b) => a.localeCompare(b, 'zh'))), [listForCategory])
+  const tree = useMemo(() => buildTree(visibleDocs.map(i => i.displayPath).sort((a, b) => a.localeCompare(b, 'zh'))), [visibleDocs])
 
   const baseTo = useMemo(() => `/tech/${id}`, [id])
   const activeIndex = useMemo(() => {
@@ -305,12 +417,8 @@ export default function TechDetail() {
 
   useEffect(() => {
     if (!activeDisplayPath) {
-      const first = listForCategory[0]?.displayPath
-      if (first) {
-        navigate(`${baseTo}/${encodeDocPath(first)}`, { replace: true })
-      } else {
-        setMdHtml('<div class="md-render"><h2>暂无内容</h2><p>这个分类下还没有可展示的 Markdown 文档。</p></div>')
-      }
+      setLoading(false)
+      setMdHtml('')
       return
     }
 
@@ -350,6 +458,17 @@ export default function TechDetail() {
       cancelled = true
     }
   }, [activeDisplayPath, baseTo, categoryConfig.categoryPrefix, docsIndex, id, listForCategory, navigate])
+
+  useEffect(() => {
+    const onScroll = () => {
+      const root = document.documentElement
+      const max = root.scrollHeight - window.innerHeight
+      setReadingProgress(max > 0 ? Math.min(100, Math.round((window.scrollY / max) * 100)) : 0)
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [activeDisplayPath])
 
   useEffect(() => {
     const el = contentRef.current
@@ -437,6 +556,27 @@ export default function TechDetail() {
     window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' })
   }
 
+  const categoryName = id === 'frontend'
+    ? '前端核心'
+    : id === 'backend'
+      ? '后端架构'
+      : id === 'database'
+        ? '数据矩阵'
+        : id === 'tools'
+          ? '效率工具'
+          : id === 'other'
+            ? '运维部署'
+            : id === 'projects'
+              ? '项目专栏'
+              : '知识库'
+  const activePathLabel = activeDisplayPath?.replace(/\.md$/i, '')
+
+  useEffect(() => {
+    document.title = activePathLabel
+      ? `${activePathLabel} · AppleSheep`
+      : `${categoryName} · AppleSheep`
+  }, [activePathLabel, categoryName])
+
   return (
     <div
       className={[
@@ -448,16 +588,20 @@ export default function TechDetail() {
     >
       {isNarrow && (
         <>
-          <button className="mobile-doc-dir-btn" type="button" onClick={() => setMobileDirOpen(true)}>目录</button>
+          <button className="mobile-doc-dir-btn" type="button" onClick={() => setMobileDirOpen(true)}><ListTree size={17} /> 笔记目录</button>
           {mobileDirOpen && (
             <div className="mobile-doc-overlay" onClick={() => setMobileDirOpen(false)}>
               <div className="mobile-doc-panel" onClick={(e) => e.stopPropagation()}>
                 <div className="mobile-doc-head">
-                  <div className="mobile-doc-title">目录</div>
-                  <button className="mobile-doc-close" type="button" onClick={() => setMobileDirOpen(false)}>×</button>
+                  <div className="mobile-doc-title">{categoryName}</div>
+                  <button className="mobile-doc-close" type="button" onClick={() => setMobileDirOpen(false)} aria-label="关闭目录"><X size={18} /></button>
                 </div>
+                <label className="sidebar-search mobile-directory-search">
+                  <Search size={15} />
+                  <input type="search" value={docFilter} onChange={(event) => setDocFilter(event.target.value)} placeholder="筛选笔记" />
+                </label>
                 <div className="mobile-doc-tree">
-                  <TreeNode node={tree} activePath={activeDisplayPath} baseTo={baseTo} openDirs={openDirs} toggleDir={toggleDir} />
+                  <TreeNode node={tree} activePath={activeDisplayPath} baseTo={baseTo} openDirs={openDirs} toggleDir={toggleDir} expandAll={Boolean(docFilter.trim())} onNavigate={() => setMobileDirOpen(false)} />
                 </div>
               </div>
             </div>
@@ -467,42 +611,71 @@ export default function TechDetail() {
       <aside className={`docs-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="docs-sidebar-header">
           <div className="docs-header-row">
-            <div className="docs-title">{id === 'frontend' ? '前端核心' : id === 'backend' ? '后端架构' : id === 'database' ? '数据矩阵' : id === 'tools' ? '效率工具' : id === 'other' ? '运维部署' : id === 'projects' ? '项目专栏' : '模块'}</div>
-            <button className="docs-sidebar-toggle" onClick={() => setSidebarCollapsed(v => !v)} type="button" title={sidebarCollapsed ? '展开目录' : '收起目录'}>
-              {sidebarCollapsed ? '»' : '«'}
+            <div>
+              <div className="docs-kicker">知识库</div>
+              <div className="docs-title">{categoryName}</div>
+            </div>
+            <button className="docs-sidebar-toggle" onClick={() => setSidebarCollapsed(v => !v)} type="button" title={sidebarCollapsed ? '展开目录' : '收起目录'} aria-label={sidebarCollapsed ? '展开目录' : '收起目录'}>
+              {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
             </button>
           </div>
         </div>
 
         {!sidebarCollapsed && (
-          <div className="docs-tree">
-            <TreeNode node={tree} activePath={activeDisplayPath} baseTo={baseTo} openDirs={openDirs} toggleDir={toggleDir} />
-          </div>
+          <>
+            <label className="sidebar-search">
+              <Search size={15} />
+              <input type="search" value={docFilter} onChange={(event) => setDocFilter(event.target.value)} placeholder="筛选当前分类" />
+            </label>
+            <div className="docs-count">{visibleDocs.length} / {listForCategory.length} 篇笔记</div>
+            <div className="docs-tree">
+              <TreeNode node={tree} activePath={activeDisplayPath} baseTo={baseTo} openDirs={openDirs} toggleDir={toggleDir} expandAll={Boolean(docFilter.trim())} />
+            </div>
+          </>
         )}
       </aside>
 
       <section className="docs-content" ref={contentRef}>
+        {activeDisplayPath && (
+          <div className="article-toolbar">
+            <button type="button" className="breadcrumb-link" onClick={() => navigate(baseTo)}>{categoryName}</button>
+            <ChevronRight size={14} />
+            <span>{activePathLabel}</span>
+            <span className="article-progress" title={`阅读进度 ${readingProgress}%`}><i style={{ width: `${readingProgress}%` }} /></span>
+          </div>
+        )}
         {loading && (
           <div className="loading">
-            <span className="load-icon">💠</span>
-            <span>SYSTEM LOADING...</span>
+            <BookOpen className="load-icon" size={28} />
+            <span>正在加载笔记...</span>
           </div>
         )}
         {!loading && mdHtml && (
           <div className="md-render fade" dangerouslySetInnerHTML={{ __html: mdHtml }} />
         )}
         {!loading && !mdHtml && (
-          <div className="empty">
-            <span style={{ fontSize: 40, marginBottom: 10 }}>📚</span>
-            <span>选择左侧笔记以查看内容</span>
+          <div className="category-empty">
+            <span className="category-empty-icon"><BookOpen size={26} /></span>
+            <span className="eyebrow">{categoryName}</span>
+            <h1>选择一篇笔记开始阅读</h1>
+            <p>当前方向收录了 {listForCategory.length} 篇内容。可以从左侧目录选择，或从基础主题开始。</p>
+            <div className="category-empty-list">
+              {categoryStartDocs.map((item, index) => (
+                <button key={item.docKey} type="button" onClick={() => navigate(`${baseTo}/${encodeDocPath(item.displayPath)}`)}>
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  {item.displayPath.replace(/\.md$/i, '')}
+                  <ArrowRight size={16} />
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </section>
 
       {!!tocItems.length && (
         <aside className={`toc-panel ${tocCollapsed ? 'collapsed' : ''}`}>
-          <button className="toc-toggle" type="button" onClick={() => setTocCollapsed(v => !v)} title={tocCollapsed ? '展开目录' : '收起目录'}>
-            {tocCollapsed ? '≡' : '×'}
+          <button className="toc-toggle" type="button" onClick={() => setTocCollapsed(v => !v)} title={tocCollapsed ? '展开本文目录' : '收起本文目录'} aria-label={tocCollapsed ? '展开本文目录' : '收起本文目录'}>
+            {tocCollapsed ? <ListTree size={18} /> : <X size={18} />}
           </button>
 
           <div className="toc-dots">
@@ -537,26 +710,18 @@ export default function TechDetail() {
         </aside>
       )}
 
-      <div className="doc-nav">
-        <button
-          className="doc-nav-btn"
-          type="button"
-          disabled={!prevDoc}
-          title={prevDoc ? `上一篇：${prevDoc.displayPath.replace(/\.md$/i, '')}` : '没有上一篇'}
-          onClick={() => prevDoc && navigate(`${baseTo}/${encodeDocPath(prevDoc.displayPath)}`)}
-        >
-          ←
-        </button>
-        <button
-          className="doc-nav-btn"
-          type="button"
-          disabled={!nextDoc}
-          title={nextDoc ? `下一篇：${nextDoc.displayPath.replace(/\.md$/i, '')}` : '没有下一篇'}
-          onClick={() => nextDoc && navigate(`${baseTo}/${encodeDocPath(nextDoc.displayPath)}`)}
-        >
-          →
-        </button>
-      </div>
+      {activeDisplayPath && (
+        <nav className="article-nav" aria-label="连续阅读">
+          <button type="button" disabled={!prevDoc} onClick={() => prevDoc && navigate(`${baseTo}/${encodeDocPath(prevDoc.displayPath)}`)}>
+            <ArrowLeft size={17} />
+            <span><small>上一篇</small>{prevDoc?.displayPath.replace(/\.md$/i, '') || '已经是第一篇'}</span>
+          </button>
+          <button type="button" disabled={!nextDoc} onClick={() => nextDoc && navigate(`${baseTo}/${encodeDocPath(nextDoc.displayPath)}`)}>
+            <span><small>下一篇</small>{nextDoc?.displayPath.replace(/\.md$/i, '') || '已经是最后一篇'}</span>
+            <ArrowRight size={17} />
+          </button>
+        </nav>
+      )}
     </div>
   )
 }
