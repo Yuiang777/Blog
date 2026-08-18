@@ -219,7 +219,9 @@ export default function App() {
     setMenuOpen(false)
   }
 
-  const categoryLinks = TECH_STACKS.map(({ id, name }) => ({ id, name, to: `/tech/${id}` }))
+  const categoryLinks = TECH_STACKS
+    .filter(({ id }) => id !== 'projects')
+    .map(({ id, name }) => ({ id, name, to: `/tech/${id}` }))
   const isKnowledgeActive = location.pathname.startsWith('/tech/') && !location.pathname.startsWith('/tech/projects')
 
   return (
@@ -248,6 +250,7 @@ export default function App() {
               <span>搜索</span>
               <kbd>Ctrl K</kbd>
             </button>
+            <span className="nav-divider desktop-only" aria-hidden="true" />
             <a className="icon-button desktop-only" href="https://github.com/Yuiang777" target="_blank" rel="noreferrer" aria-label="访问 GitHub" title="访问 GitHub">
               <Code2 size={19} />
             </a>
