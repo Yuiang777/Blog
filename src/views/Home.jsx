@@ -114,12 +114,12 @@ export default function Home() {
         <img className="hero-media" src={mysqlArchitecture} alt="MySQL 体系结构笔记图" />
         <div className="hero-overlay" aria-hidden="true" />
         <div className="hero-copy">
-          <span className="eyebrow hero-eyebrow"><Sparkles size={15} /> Personal knowledge system</span>
+          <span className="eyebrow hero-eyebrow"><Sparkles size={15} /> AS / field notes</span>
           <h1 id="home-title">AppleSheep</h1>
-          <p>把零散记录整理成可以持续阅读、实践和复盘的技术档案。</p>
+          <p>把零散记录整理成有轨道的知识，把每次实践留下可回看的证据。</p>
           <div className="hero-actions">
-            <button className="primary-action" type="button" onClick={() => navigate('/tech/frontend')}>开始学习 <ArrowRight size={17} /></button>
-            <button className="secondary-action" type="button" onClick={() => navigate('/tech/projects')}>浏览项目专栏</button>
+            <button className="primary-action" type="button" onClick={() => navigate('/tech/frontend')}>进入知识轨道 <ArrowRight size={17} /></button>
+            <button className="secondary-action" type="button" onClick={() => navigate('/tech/projects')}>查看实践专栏</button>
           </div>
         </div>
         <div className="hero-stats" aria-label="知识库统计">
@@ -132,10 +132,10 @@ export default function Home() {
       <section className="home-section direction-section">
         <div className="section-heading split-heading">
           <div>
-            <span className="eyebrow">Knowledge Tracks</span>
-            <h2>按学习方向进入，不在目录里迷路。</h2>
+          <span className="eyebrow">AS / knowledge tracks</span>
+            <h2>沿着轨道学习，也沿着实践回看。</h2>
           </div>
-          <p>每个方向都从基础开始，并为项目实践和后续复盘预留位置。</p>
+          <p>每条轨道都从基础开始，最终汇入项目实践和复盘。</p>
         </div>
         <div className="tech-grid">
           {TECH_STACKS.map((tech, index) => {
@@ -157,7 +157,7 @@ export default function Home() {
 
       <section className="home-section featured-section">
         <div className="section-heading">
-          <span className="eyebrow"><BookOpen size={15} /> 从这里开始</span>
+          <span className="eyebrow"><BookOpen size={15} /> AS / start here</span>
           <h2>三条最适合建立手感的主线。</h2>
         </div>
         <div className="featured-grid">
@@ -175,8 +175,8 @@ export default function Home() {
 
       <section className="home-section roadmap-section">
         <div className="section-heading">
-          <span className="eyebrow"><Compass size={15} /> Learning map</span>
-          <h2>把笔记变成一条可执行的成长路线。</h2>
+          <span className="eyebrow"><Compass size={15} /> AS / practice loop</span>
+          <h2>记录、实践、复盘，组成自己的成长回路。</h2>
         </div>
         <div className="roadmap-grid">
           {TECH_STACKS.map((tech, index) => {
@@ -194,7 +194,7 @@ export default function Home() {
           })}
         </div>
         <button className="roadmap-cta" type="button" onClick={() => navigate('/tech/projects')}>
-          <FolderKanban size={18} /> 从项目记录中查看知识如何落地 <ArrowRight size={17} />
+          <FolderKanban size={18} /> 从实践专栏查看知识如何落地 <ArrowRight size={17} />
         </button>
       </section>
     </div>

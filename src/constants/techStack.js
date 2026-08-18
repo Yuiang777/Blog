@@ -25,7 +25,7 @@ export const TECH_STACKS = [
   },
   {
     id: 'projects',
-    name: '项目专栏',
+    name: '实践专栏',
     description: '项目拆解、架构设计、接口实现与复盘沉淀',
     icon: '📦'
   },

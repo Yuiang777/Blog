@@ -567,8 +567,8 @@ export default function TechDetail() {
           : id === 'other'
             ? '运维部署'
             : id === 'projects'
-              ? '项目专栏'
-              : '知识库'
+              ? '实践专栏'
+              : '知识轨道'
   const activePathLabel = activeDisplayPath?.replace(/\.md$/i, '')
 
   useEffect(() => {
@@ -588,7 +588,7 @@ export default function TechDetail() {
     >
       {isNarrow && (
         <>
-          <button className="mobile-doc-dir-btn" type="button" onClick={() => setMobileDirOpen(true)}><ListTree size={17} /> 笔记目录</button>
+          <button className="mobile-doc-dir-btn" type="button" onClick={() => setMobileDirOpen(true)}><ListTree size={17} /> 本轨目录</button>
           {mobileDirOpen && (
             <div className="mobile-doc-overlay" onClick={() => setMobileDirOpen(false)}>
               <div className="mobile-doc-panel" onClick={(e) => e.stopPropagation()}>
@@ -612,7 +612,7 @@ export default function TechDetail() {
         <div className="docs-sidebar-header">
           <div className="docs-header-row">
             <div>
-              <div className="docs-kicker">知识库</div>
+              <div className="docs-kicker">AppleSheep / track</div>
               <div className="docs-title">{categoryName}</div>
             </div>
             <button className="docs-sidebar-toggle" onClick={() => setSidebarCollapsed(v => !v)} type="button" title={sidebarCollapsed ? '展开目录' : '收起目录'} aria-label={sidebarCollapsed ? '展开目录' : '收起目录'}>

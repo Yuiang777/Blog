@@ -3,6 +3,7 @@ import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import {
   ArrowRight,
   Code2,
+  FolderKanban,
   LayoutGrid,
   Menu,
   Moon,
@@ -23,6 +24,15 @@ const CATEGORY_PREFIX = {
   tools: '工具',
   projects: '专栏',
   other: '运维部署'
+}
+
+const TRACK_META = {
+  frontend: { label: '前端轨道', tone: 'cyan' },
+  backend: { label: '后端轨道', tone: 'green' },
+  database: { label: '数据轨道', tone: 'amber' },
+  tools: { label: '工具轨道', tone: 'rose' },
+  projects: { label: '实践专栏', tone: 'violet' },
+  other: { label: '交付轨道', tone: 'blue' }
 }
 
 function normalizePath(path) {
@@ -148,7 +158,7 @@ function SearchDialog({ open, onClose }) {
         </div>
         <div className="search-results" aria-live="polite">
           {!query.trim() && <p className="search-hint">输入关键词，检索全部学习笔记和项目记录。</p>}
-          {loading && <p className="search-hint">正在检索知识库...</p>}
+          {loading && <p className="search-hint">正在检索 AppleSheep 笔记...</p>}
           {!loading && query.trim() && results.length === 0 && <p className="search-hint">没有找到相关笔记。</p>}
           {!loading && results.map(({ docKey, excerpt }) => {
             const categoryId = getCategoryId(docKey)
@@ -208,9 +218,9 @@ export default function App() {
     const segments = location.pathname.split('/').filter(Boolean)
     if (segments[0] === 'tech' && segments.length === 2) {
       const id = location.pathname.split('/')[2]
-      document.title = `${TECH_STACKS.find(item => item.id === id)?.name || '知识库'} · AppleSheep`
+      document.title = `${TECH_STACKS.find(item => item.id === id)?.name || '知识轨道'} · AppleSheep`
     } else if (segments[0] !== 'tech') {
-      document.title = 'AppleSheep · 技术知识花园'
+      document.title = 'AppleSheep · 记录 / 实践 / 复盘'
     }
   }, [location.pathname])
 
@@ -223,6 +233,12 @@ export default function App() {
     .filter(({ id }) => id !== 'projects')
     .map(({ id, name }) => ({ id, name, to: `/tech/${id}` }))
   const isKnowledgeActive = location.pathname.startsWith('/tech/') && !location.pathname.startsWith('/tech/projects')
+  const activeTrackId = location.pathname.startsWith('/tech/projects')
+    ? 'projects'
+    : location.pathname.startsWith('/tech/')
+      ? location.pathname.split('/')[2]
+      : null
+  const activeTrack = TRACK_META[activeTrackId] || { label: '首页 · 总览', tone: 'teal' }
 
   return (
     <div className="tech-blog-app">
@@ -232,16 +248,23 @@ export default function App() {
             <span className="brand-mark">AS</span>
             <span>
               <strong>AppleSheep</strong>
-              <small>Knowledge garden</small>
+              <small>field notes / lab</small>
             </span>
           </button>
 
           <div className="desktop-nav">
             <button className={`nav-text-button ${location.pathname === '/' ? 'active' : ''}`} type="button" onClick={() => go('/')}>首页</button>
             <button className={`nav-text-button ${isKnowledgeActive ? 'active' : ''}`} type="button" onClick={() => go('/tech/frontend')}>
-              <LayoutGrid size={16} /> 知识库
+              <LayoutGrid size={16} /> 知识轨道
             </button>
-            <button className={`nav-text-button ${location.pathname.startsWith('/tech/projects') ? 'active' : ''}`} type="button" onClick={() => go('/tech/projects')}>项目专栏</button>
+            <button className={`nav-text-button ${location.pathname.startsWith('/tech/projects') ? 'active' : ''}`} type="button" onClick={() => go('/tech/projects')}>
+              <FolderKanban size={16} /> 实践专栏
+            </button>
+          </div>
+
+          <div className={`nav-track-status tone-${activeTrack.tone}`} aria-label={`当前所在${activeTrack.label}`}>
+            <span className="track-signal" aria-hidden="true"><i /><i /><i /></span>
+            <span><small>NOW IN</small><strong>{activeTrack.label}</strong></span>
           </div>
 
           <div className="header-actions">
@@ -271,9 +294,13 @@ export default function App() {
               <span>导航</span>
               <button className="icon-button" type="button" onClick={() => setMenuOpen(false)} aria-label="关闭菜单" title="关闭菜单"><X size={18} /></button>
             </div>
+            <div className="mobile-nav-identity">
+              <span className="mobile-nav-mark">AS</span>
+              <span><strong>AppleSheep / LAB</strong><small>记录 · 实践 · 复盘</small></span>
+            </div>
             <button type="button" onClick={() => go('/')}>首页</button>
-            <button type="button" onClick={() => go('/tech/projects')}>项目专栏</button>
-            <div className="mobile-nav-label">学习方向</div>
+            <button type="button" className={location.pathname.startsWith('/tech/projects') ? 'active' : ''} onClick={() => go('/tech/projects')}>实践专栏</button>
+            <div className="mobile-nav-label">AppleSheep 轨道</div>
             {categoryLinks.map(link => <button type="button" key={link.id} onClick={() => go(link.to)}>{link.name}</button>)}
             <div className="mobile-nav-footer">
               <a href="https://github.com/Yuiang777" target="_blank" rel="noreferrer"><Code2 size={17} /> GitHub</a>
