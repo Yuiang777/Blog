@@ -216,6 +216,306 @@ response.getWriter().write("hello,world");
 
 > 图片说明：原笔记引用的 Starter.jpg、Starter配置步骤.jpg、@Conditional.jpg、自动配置类.jpg、AOP.jpg、AOP核心概念.jpg等 22 张 未保存到仓库；相关文字知识点已保留。
 
+## 一次 Web 请求的完整链路
+
+```text
+客户端
+  -> Servlet Filter
+  -> DispatcherServlet
+  -> HandlerInterceptor.preHandle
+  -> Controller
+  -> Application Service
+  -> Repository / 外部服务
+  -> HandlerInterceptor.afterCompletion
+  -> Filter 返回响应
+```
+
+- Filter 属于 Servlet 规范，适合请求包装、CORS、通用安全头和 trace ID。
+- Interceptor 属于 Spring MVC，能获取 Handler，适合登录上下文、接口权限和耗时统计。
+- AOP 围绕 Spring Bean 方法，适合审计、事务和稳定的横切逻辑。
+- 业务规则放在 Service 或领域对象中，不能散落在 Filter 和 AOP。
+
+每一层只承担清晰职责，排错时才能判断请求在哪一阶段失败。
+
+## 接口设计与参数校验
+
+### 请求对象
+
+```java
+public record CreateArticleRequest(
+    @NotBlank @Size(max = 120) String title,
+    @NotBlank String content,
+    @NotEmpty Set<@NotBlank String> tags,
+    @NotNull ArticleVisibility visibility
+) {}
+
+@PostMapping("/articles")
+public ResponseEntity<ArticleResponse> create(
+        @Valid @RequestBody CreateArticleRequest request,
+        @AuthenticationPrincipal LoginUser user) {
+    ArticleResponse response = articleApplicationService.create(request, user);
+    return ResponseEntity.status(HttpStatus.CREATED).body(response);
+}
+```
+
+Bean Validation 负责格式和基本约束；“标签是否存在”“用户能否发布到该专栏”等需要查询数据的规则放在业务层。
+
+### 分组校验要谨慎
+
+创建和修改差异很大时，优先使用不同 DTO，而不是在一个巨型 DTO 上堆大量校验分组。独立对象能让接口契约更明确，也避免客户端修改不允许变更的字段。
+
+### 统一异常响应
+
+```java
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException ex) {
+        var fields = ex.getBindingResult().getFieldErrors().stream()
+            .map(error -> new FieldErrorItem(error.getField(), error.getDefaultMessage()))
+            .toList();
+        return ResponseEntity.badRequest()
+            .body(ApiError.validation("VALIDATION_FAILED", fields));
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    ResponseEntity<ApiError> handleNotFound(ResourceNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+            .body(ApiError.of("RESOURCE_NOT_FOUND", ex.getMessage()));
+    }
+}
+```
+
+不要把堆栈、SQL 或内部类名返回给客户端。响应保留稳定错误码和 trace ID，详细异常写入服务端日志。
+
+## 配置体系与环境隔离
+
+### 类型安全配置
+
+```java
+@ConfigurationProperties(prefix = "storage")
+@Validated
+public record StorageProperties(
+    @NotBlank String endpoint,
+    @NotBlank String bucket,
+    @DurationUnit(ChronoUnit.SECONDS) Duration timeout
+) {}
+```
+
+```yaml
+storage:
+  endpoint: ${STORAGE_ENDPOINT}
+  bucket: ${STORAGE_BUCKET:applesheep-public}
+  timeout: 5s
+```
+
+相比散落的 `@Value`，`@ConfigurationProperties` 更容易校验、测试和发现配置项。启动时缺少关键配置应直接失败，而不是等到第一次请求才报错。
+
+### Profile 的边界
+
+Profile 用于少量环境差异，不应用于维护完全不同的业务代码。推荐：
+
+- 默认配置保留所有环境共享项。
+- 环境变量或部署配置覆盖地址、容量和开关。
+- 密码、令牌和私钥由 Secret 管理系统注入。
+- 生产环境禁止启用调试端点和详细错误响应。
+
+## 事务设计
+
+### 事务边界放在哪里
+
+事务通常放在完成一个业务用例的 public Service 方法上：
+
+```java
+@Transactional
+public Long publishArticle(PublishArticleCommand command, LoginUser user) {
+    permissionService.checkPublish(user, command.categoryId());
+    Article article = Article.create(command, user.id(), clock.instant());
+    articleRepository.insert(article);
+    outboxRepository.append(ArticlePublished.from(article));
+    return article.getId();
+}
+```
+
+数据库写入和 Outbox 事件处于同一事务。外部 HTTP、邮件和消息发送不应长时间占用数据库事务。
+
+### 常见失效原因
+
+- 同类内部调用绕过 Spring 代理，`@Transactional` 不生效。
+- 方法不是可代理的 public 方法，或对象不是 Spring Bean。
+- 捕获异常后不再抛出，事务按成功提交。
+- 默认只对运行时异常回滚，受检异常需要明确策略。
+- 异步线程和新建线程不会自动继承原事务。
+
+### 传播行为
+
+`REQUIRED` 是常用默认值：有事务就加入，没有就新建。`REQUIRES_NEW` 会挂起外层事务并创建新事务，只适合确实需要独立提交的场景，例如某些审计记录；滥用会导致外层失败但部分数据已提交。
+
+### 乐观锁
+
+```sql
+UPDATE article
+SET title = ?, content = ?, version = version + 1
+WHERE id = ? AND version = ?;
+```
+
+受影响行数为零时返回并发冲突。不要在读取后无条件覆盖其他用户刚刚提交的修改。
+
+## 认证与授权
+
+### 认证流程
+
+1. 用户登录，服务校验凭证。
+2. 签发短期访问令牌，必要时配合长期刷新令牌。
+3. 请求经过安全过滤器，解析并验证令牌。
+4. 将最小身份信息放入 `SecurityContext`。
+5. Controller 和 Service 根据身份与资源执行授权。
+
+令牌验证至少检查签名、过期时间、签发者和受众。不能只把 JWT Base64 解码后就信任其中内容。
+
+### 授权必须靠近资源
+
+```java
+public ArticleResponse update(Long articleId, UpdateArticleRequest request, LoginUser user) {
+    Article article = articleRepository.require(articleId);
+    if (!article.canEditBy(user.id(), user.roles())) {
+        throw new ForbiddenException("无权修改此文章");
+    }
+    // ...
+}
+```
+
+路由级角色判断无法覆盖“只能修改自己的文章”这类资源权限，因此 Service 必须再次校验。
+
+### Web 安全基线
+
+- 密码使用 BCrypt、Argon2 等专用算法哈希。
+- Cookie 会话启用 `HttpOnly`、`Secure` 和合适的 `SameSite`。
+- Cookie 认证的写请求需要 CSRF 防护。
+- CORS 使用明确来源白名单，不把凭证与任意来源组合。
+- 上传文件校验大小、类型、扩展名和存储路径，不直接信任原文件名。
+- 对登录、搜索和高成本接口实施限流。
+
+## 数据访问与性能
+
+### 避免 N+1
+
+列表查询不要对每一行继续查询作者、标签或统计。可通过 join、批量查询、专用读模型或缓存解决。开启 SQL 日志只用于开发排查，生产应采集慢 SQL 和汇总指标，避免泄露参数。
+
+### 分页
+
+浅分页可以使用 offset；深分页更适合基于稳定排序键的游标：
+
+```sql
+SELECT id, title, published_at
+FROM article
+WHERE status = 'PUBLISHED'
+  AND (published_at, id) < (:lastPublishedAt, :lastId)
+ORDER BY published_at DESC, id DESC
+LIMIT :size;
+```
+
+排序必须稳定且索引匹配。客户端 page size 设置上限，不能一次请求全部数据。
+
+### 缓存
+
+缓存适合读多写少、允许短暂旧数据的内容。设计时明确：
+
+- key 包含哪些业务维度和权限范围。
+- TTL 与主动失效策略。
+- 空值缓存与随机过期，避免穿透和雪崩。
+- 缓存不可用时是回源、降级还是拒绝。
+
+使用 `@Cacheable` 仍要理解代理调用、序列化和一致性，不应把缓存注解当作无成本优化。
+
+## 异步与定时任务
+
+### `@Async` 注意事项
+
+- 配置独立、可观测且有界的线程池。
+- 明确队列满时的拒绝策略。
+- 异步方法异常不会自动返回给原请求。
+- MDC、登录身份和事务上下文不会天然传播。
+- 关键任务不能只存在内存队列，进程重启会丢失。
+
+```java
+@Bean
+ThreadPoolTaskExecutor notificationExecutor() {
+    var executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(4);
+    executor.setMaxPoolSize(8);
+    executor.setQueueCapacity(200);
+    executor.setThreadNamePrefix("notification-");
+    executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+    return executor;
+}
+```
+
+### 定时任务
+
+多实例部署时，普通 `@Scheduled` 会在每个实例各执行一次。需要单实例语义时使用数据库锁、Redis 锁或任务调度平台，并设置锁超时、幂等和补偿扫描。
+
+## 可观测性与健康检查
+
+### Actuator
+
+推荐暴露经过控制的健康、指标和信息端点。健康检查区分：
+
+- liveness：应用进程是否需要重启。
+- readiness：应用是否已经准备好接收流量。
+
+数据库短暂不可用可能影响 readiness，但不一定应该让容器无限重启。敏感端点必须鉴权或只在内网开放。
+
+### 日志与追踪
+
+结构化日志至少包含时间、级别、服务名、trace ID、错误码和必要业务键。禁止记录密码、令牌、完整请求体和个人敏感信息。
+
+关键指标：请求量、错误率、P95/P99 延迟、线程池队列、连接池等待、GC、外部依赖耗时和业务成功率。
+
+## 测试策略
+
+### 测试金字塔
+
+| 类型 | 重点 | 常用方式 |
+| --- | --- | --- |
+| 单元测试 | 纯业务规则、边界值 | JUnit、Mockito 少量替身 |
+| Slice 测试 | MVC、序列化、Mapper | `@WebMvcTest`、`@DataJpaTest` |
+| 集成测试 | 事务、数据库、消息 | `@SpringBootTest`、Testcontainers |
+| 契约测试 | 服务输入输出兼容 | Provider / Consumer Contract |
+| 端到端测试 | 少量核心用户路径 | 真实部署环境或预发布环境 |
+
+### Controller 测试示例
+
+```java
+@WebMvcTest(ArticleController.class)
+class ArticleControllerTest {
+    @Autowired MockMvc mvc;
+    @MockBean ArticleApplicationService service;
+
+    @Test
+    void shouldRejectBlankTitle() throws Exception {
+        mvc.perform(post("/articles")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"title":"","content":"body","tags":["java"],"visibility":"PUBLIC"}"""))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+}
+```
+
+测试不仅覆盖成功路径，还要包含无权限、不存在、并发冲突、重复请求、依赖超时和事务回滚。
+
+## 生产发布清单
+
+- 使用受支持的 JDK 与 Spring Boot 版本。
+- 构建产物与 Git 提交、配置版本可追踪。
+- JVM 内存与容器限制匹配，并预留堆外空间。
+- 数据库迁移向前兼容，发布前备份并验证回滚。
+- readiness、优雅停机和连接池超时已配置。
+- Secret 未进入仓库、镜像和日志。
+- 核心接口的错误率、延迟和业务指标有告警。
+- 灰度发布后再逐步放量，不一次替换全部实例。
+
 ## 综合示例
 
 ### 综合示例：规范的查询接口
@@ -257,6 +557,8 @@ class ArticleController {
 1. 为创建文章接口设计请求对象和校验。
 2. 过滤器和拦截器的主要区别是什么？
 3. 为什么推荐构造器注入？
+4. 为什么同一个 Bean 内部调用事务方法可能不生效？
+5. 多实例部署时如何避免 `@Scheduled` 任务重复执行？
 
 ## 参考答案
 
@@ -271,6 +573,14 @@ class ArticleController {
 ### 3. 为什么推荐构造器注入？
 
 依赖不可缺失、可声明为 final、对象在创建后即完整，也更容易在测试中直接传入替身。
+
+### 4. 为什么同一个 Bean 内部调用事务方法可能不生效？
+
+Spring 事务通常由代理拦截，从对象内部使用 `this` 调用不会经过代理，因此事务切面无法执行。应重新划分业务边界、把方法移动到独立 Bean，或通过明确的事务模板执行。
+
+### 5. 多实例部署时如何避免 `@Scheduled` 任务重复执行？
+
+任务本身先实现幂等，再使用数据库锁、Redis 锁或专用调度平台保证同一时刻只有一个实例取得执行权；锁必须设置租约、续期或超时，并监控任务漏跑和执行失败。
 
 ## 复习清单
 
