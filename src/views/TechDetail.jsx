@@ -287,7 +287,7 @@ export default function TechDetail() {
   const [loading, setLoading] = useState(false)
   const [openDirs, setOpenDirs] = useState(() => new Set(['Vue', 'java', 'mysql', 'JDBC', 'GO笔记']))
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [tocCollapsed, setTocCollapsed] = useState(true)
+  const [tocCollapsed, setTocCollapsed] = useState(false)
   const [tocItems, setTocItems] = useState([])
   const [activeTocId, setActiveTocId] = useState('')
   const [mobileDirOpen, setMobileDirOpen] = useState(false)
@@ -295,6 +295,8 @@ export default function TechDetail() {
   const [docFilter, setDocFilter] = useState('')
   const [readingProgress, setReadingProgress] = useState(0)
   const contentRef = useRef(null)
+  const docsTreeRef = useRef(null)
+  const tocBodyRef = useRef(null)
 
   const docsIndex = useMemo(() => {
     const docModuleKeyByDocKey = new Map()
@@ -531,22 +533,35 @@ export default function TechDetail() {
       return
     }
 
-    const obs = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter(e => e.isIntersecting)
-          .sort((a, b) => (a.boundingClientRect.top - b.boundingClientRect.top))
-        if (visible[0]?.target?.id) setActiveTocId(visible[0].target.id)
-      },
-      { root: null, rootMargin: '-90px 0px -65% 0px', threshold: [0.01, 0.1] }
-    )
+    const headingNodes = items
+      .map(item => document.getElementById(item.id))
+      .filter(Boolean)
+    let frameId = 0
 
-    for (const it of items) {
-      const node = document.getElementById(it.id)
-      if (node) obs.observe(node)
+    const updateActiveHeading = () => {
+      frameId = 0
+      const readingLine = 112
+      let currentId = headingNodes[0]?.id || ''
+      for (const heading of headingNodes) {
+        if (heading.getBoundingClientRect().top > readingLine) break
+        currentId = heading.id
+      }
+      setActiveTocId(currentId)
     }
 
-    return () => obs.disconnect()
+    const scheduleUpdate = () => {
+      if (!frameId) frameId = window.requestAnimationFrame(updateActiveHeading)
+    }
+
+    updateActiveHeading()
+    window.addEventListener('scroll', scheduleUpdate, { passive: true })
+    window.addEventListener('resize', scheduleUpdate)
+
+    return () => {
+      window.removeEventListener('scroll', scheduleUpdate)
+      window.removeEventListener('resize', scheduleUpdate)
+      if (frameId) window.cancelAnimationFrame(frameId)
+    }
   }, [mdHtml])
 
   const scrollToId = (headingId) => {
@@ -570,6 +585,33 @@ export default function TechDetail() {
               ? '实践专栏'
               : '知识轨道'
   const activePathLabel = activeDisplayPath?.replace(/\.md$/i, '')
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const container = docsTreeRef.current
+      const activeItem = container?.querySelector('.docs-item.active')
+      if (!container || !activeItem) return
+      const containerRect = container.getBoundingClientRect()
+      const itemRect = activeItem.getBoundingClientRect()
+      if (itemRect.top < containerRect.top + 20) container.scrollTop -= containerRect.top + 20 - itemRect.top
+      else if (itemRect.bottom > containerRect.bottom - 20) container.scrollTop += itemRect.bottom - containerRect.bottom + 20
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeDisplayPath, sidebarCollapsed])
+
+  useEffect(() => {
+    if (tocCollapsed || !activeTocId) return undefined
+    const frame = window.requestAnimationFrame(() => {
+      const container = tocBodyRef.current
+      const activeItem = container?.querySelector('.toc-item.active')
+      if (!container || !activeItem) return
+      const containerRect = container.getBoundingClientRect()
+      const itemRect = activeItem.getBoundingClientRect()
+      if (itemRect.top < containerRect.top + 34) container.scrollTop -= containerRect.top + 34 - itemRect.top
+      else if (itemRect.bottom > containerRect.bottom - 20) container.scrollTop += itemRect.bottom - containerRect.bottom + 20
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeTocId, tocCollapsed])
 
   useEffect(() => {
     document.title = activePathLabel
@@ -628,7 +670,7 @@ export default function TechDetail() {
               <input type="search" value={docFilter} onChange={(event) => setDocFilter(event.target.value)} placeholder="筛选当前分类" />
             </label>
             <div className="docs-count">{visibleDocs.length} / {listForCategory.length} 篇笔记</div>
-            <div className="docs-tree">
+            <div className="docs-tree" ref={docsTreeRef}>
               <TreeNode node={tree} activePath={activeDisplayPath} baseTo={baseTo} openDirs={openDirs} toggleDir={toggleDir} expandAll={Boolean(docFilter.trim())} />
             </div>
           </>
@@ -691,7 +733,7 @@ export default function TechDetail() {
           </div>
 
           {!tocCollapsed && (
-            <div className="toc-body">
+            <div className="toc-body" ref={tocBodyRef}>
               <div className="toc-title">本文目录</div>
               <div className="toc-list">
                 {tocItems.map((it) => (
