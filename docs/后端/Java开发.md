@@ -1653,6 +1653,246 @@ public interface SimpleMapper {
 - `@MappingTarget`：更新到已有对象
 - `@AfterMapping`：映射后补充处理
 
+## 现代 Java 工程补充
+
+### 不可变数据与 record
+
+`record` 适合表达透明、以数据为中心的不可变载体：
+
+```java
+public record Money(BigDecimal amount, Currency currency) {
+    public Money {
+        Objects.requireNonNull(amount);
+        Objects.requireNonNull(currency);
+        if (amount.scale() > currency.getDefaultFractionDigits()) {
+            throw new IllegalArgumentException("金额精度不合法");
+        }
+    }
+
+    public Money add(Money other) {
+        if (!currency.equals(other.currency)) {
+            throw new IllegalArgumentException("币种不一致");
+        }
+        return new Money(amount.add(other.amount), currency);
+    }
+}
+```
+
+record 自动生成访问器、`equals`、`hashCode` 和 `toString`，但不会自动深度不可变。字段若是可变集合，应在构造时防御性复制。
+
+### sealed class 与模式匹配
+
+有限类型层次可以用 sealed 类型表达：
+
+```java
+public sealed interface PaymentResult permits Paid, Rejected, Pending {}
+public record Paid(String transactionId) implements PaymentResult {}
+public record Rejected(String reason) implements PaymentResult {}
+public record Pending(Instant nextCheckAt) implements PaymentResult {}
+
+String message = switch (result) {
+    case Paid paid -> "支付成功：" + paid.transactionId();
+    case Rejected rejected -> "支付失败：" + rejected.reason();
+    case Pending pending -> "处理中：" + pending.nextCheckAt();
+};
+```
+
+编译器能检查分支是否完整，适合状态结果、命令和领域事件。开放扩展的插件体系则不适合封闭层次。
+
+## 类型、泛型与集合
+
+### 泛型边界
+
+PECS 原则：生产数据使用 `? extends T`，消费数据使用 `? super T`。
+
+```java
+static <T> void copy(List<? extends T> source, List<? super T> target) {
+    target.addAll(source);
+}
+```
+
+不要使用原始类型 `List`。泛型主要在编译期提供类型安全，运行时受类型擦除影响，不能直接 `new T()` 或判断 `value instanceof List<String>`。
+
+### 集合选择
+
+| 需求 | 推荐类型 | 注意点 |
+| --- | --- | --- |
+| 有序、按下标访问 | `ArrayList` | 中间插入删除成本高 |
+| 唯一且快速查找 | `HashSet` | 元素哈希值必须稳定 |
+| 保持插入顺序 | `LinkedHashMap` | 比 HashMap 有额外开销 |
+| 按键排序 | `TreeMap` | 比较器必须与相等语义一致 |
+| 并发键值访问 | `ConcurrentHashMap` | 复合操作使用原子 API |
+
+对外返回集合时使用 `List.copyOf` 等不可变副本，避免调用方修改内部状态。
+
+### `equals` 与 `hashCode`
+
+相等对象必须具有相同哈希值。用作 HashMap key 的字段在存入后不能变化。实体相等语义需要明确：是数据库 ID、业务唯一键还是全部值，不要让 IDE 自动生成后就不再审查。
+
+## 异常与资源管理
+
+### 异常分类
+
+- 参数格式错误：在边界尽早拒绝。
+- 业务拒绝：使用稳定业务错误码表达。
+- 外部依赖失败：保留 cause，转换为应用层可理解错误。
+- 编程错误：让异常暴露并通过测试修复，不要吞掉。
+
+```java
+try {
+    return paymentClient.pay(command);
+} catch (SocketTimeoutException cause) {
+    throw new PaymentUnavailableException("支付渠道超时", cause);
+}
+```
+
+日志只记录一次完整堆栈。低层记录后高层再记录会制造重复噪声。
+
+### try-with-resources
+
+```java
+try (var input = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+    return input.lines().toList();
+}
+```
+
+实现 `AutoCloseable` 的资源都应在明确作用域中关闭。数据库连接、流、HTTP 响应体和压缩文件尤其要注意异常路径。
+
+## 并发设计
+
+### 先减少共享可变状态
+
+并发安全的优先顺序：不可变对象、线程封闭、消息传递、并发容器，最后才是手工锁。锁只保护明确不变量，持锁期间不执行未知耗时的网络和磁盘操作。
+
+### 原子复合操作
+
+```java
+ConcurrentHashMap<String, LongAdder> counters = new ConcurrentHashMap<>();
+counters.computeIfAbsent("success", key -> new LongAdder()).increment();
+```
+
+“先 contains 再 put”不是原子操作。使用 `computeIfAbsent`、`merge`、`putIfAbsent` 或显式同步表达完整操作。
+
+### 线程池
+
+线程池必须有界并可观测：
+
+```java
+ExecutorService executor = new ThreadPoolExecutor(
+    8,
+    16,
+    60,
+    TimeUnit.SECONDS,
+    new ArrayBlockingQueue<>(500),
+    new ThreadPoolExecutor.CallerRunsPolicy()
+);
+```
+
+核心参数基于任务类型、耗时和下游容量估算。无界队列会把过载变成内存积压；拒绝策略必须与业务降级和告警联动。
+
+### CompletableFuture
+
+```java
+var userFuture = CompletableFuture.supplyAsync(() -> userClient.get(userId), ioExecutor);
+var orderFuture = CompletableFuture.supplyAsync(() -> orderClient.list(userId), ioExecutor);
+
+var page = userFuture.thenCombine(orderFuture, UserOrderPage::new)
+    .orTimeout(800, TimeUnit.MILLISECONDS)
+    .exceptionally(cause -> fallback(userId, cause))
+    .join();
+```
+
+显式提供执行器，不把阻塞业务全部丢给公共 ForkJoinPool。异常链路、超时、取消和部分成功都要设计。
+
+### 虚拟线程
+
+Java 21 虚拟线程适合大量“每请求一个任务”的阻塞 I/O：
+
+```java
+try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+    Future<User> user = executor.submit(() -> userClient.get(userId));
+    Future<List<Order>> orders = executor.submit(() -> orderClient.list(userId));
+    return new UserOrderPage(user.get(), orders.get());
+}
+```
+
+虚拟线程降低线程等待成本，但不会让数据库、连接池和下游容量变大。仍需超时、限流和连接池。CPU 密集任务也不会因为虚拟线程自动更快。
+
+## JVM 与诊断
+
+### 内存区域
+
+- 堆：普通对象，主要由 GC 管理。
+- 线程栈：方法帧、局部变量和调用信息。
+- Metaspace：类元数据。
+- 直接内存：NIO、网络框架等堆外使用。
+- Code Cache：JIT 编译后的机器码。
+
+容器内存限制必须同时考虑堆、Metaspace、直接内存、线程栈和本地库，不能把全部内存都分给 `-Xmx`。
+
+### GC 判断
+
+先明确现象：吞吐下降、停顿过长、堆持续上涨还是频繁 Full GC。常用工具：
+
+```bash
+jcmd <pid> VM.flags
+jcmd <pid> GC.heap_info
+jcmd <pid> Thread.print
+jcmd <pid> JFR.start name=incident duration=60s filename=incident.jfr
+```
+
+JFR 适合低开销采集 CPU、分配、锁、I/O 和 GC。不要在线上第一反应就生成超大堆转储，先评估磁盘、停顿和敏感数据风险。
+
+### 内存泄漏分析思路
+
+1. 确认 GC 后存活对象是否持续增长。
+2. 找到占用最大的对象类型和引用链。
+3. 检查静态集合、无界缓存、监听器、ThreadLocal 和类加载器。
+4. 修复后用相同压力与时间窗口验证。
+
+## API 与领域建模
+
+### 空值处理
+
+对公开方法明确参数是否允许 null。`Optional` 适合作为“可能没有结果”的返回值，不建议作为实体字段、方法参数或集合元素。
+
+```java
+Optional<User> findById(long id);
+```
+
+集合无结果返回空集合，不返回 null。
+
+### 时间与金额
+
+- 业务金额使用 `BigDecimal` 或最小货币单位整数。
+- 时间点使用 `Instant`，带时区展示使用 `ZonedDateTime`。
+- 日期使用 `LocalDate`，不要用字符串承载时间语义。
+- 序列化时明确时区和格式，数据库统一存储策略。
+
+## 测试与质量
+
+### 单元测试结构
+
+```java
+@Test
+void shouldRejectDifferentCurrency() {
+    Money cny = new Money(new BigDecimal("10.00"), Currency.getInstance("CNY"));
+    Money usd = new Money(new BigDecimal("2.00"), Currency.getInstance("USD"));
+
+    assertThrows(IllegalArgumentException.class, () -> cny.add(usd));
+}
+```
+
+测试名称表达行为，覆盖边界、异常和不变量。只有外部依赖使用替身，避免把每一个内部对象都 mock 掉。
+
+### 工程检查
+
+- 编译开启合理警告，清理 unchecked 和 raw type。
+- 格式化、静态分析和测试进入 CI。
+- 依赖版本可重建，定期处理已知漏洞。
+- 线上启用结构化日志、指标和追踪。
+- 性能结论通过 JMH 或真实压测获得，不用单次 `System.nanoTime` 猜测。
+
 ## 综合示例
 
 ### 综合示例：按分类统计有效订单金额
@@ -1693,6 +1933,8 @@ public static Map<String, Long> summarize(List<Order> orders) {
 1. 实现一个不可变的值对象 `Money`。
 2. 解释 `HashMap` 为什么要求键的哈希值保持稳定。
 3. 什么时候使用 JDK 动态代理，什么时候使用 CGLIB？
+4. 虚拟线程适合什么任务，为什么仍需要限制数据库并发？
+5. Java 服务内存持续上涨时应如何开始诊断？
 
 ## 参考答案
 
@@ -1708,12 +1950,28 @@ public static Map<String, Long> summarize(List<Order> orders) {
 
 有稳定接口时优先 JDK 动态代理；无接口且允许继承时可用 CGLIB。`final` 类或方法不能被 CGLIB 覆盖。
 
+### 4. 虚拟线程适合什么任务，为什么仍需要限制数据库并发？
+
+虚拟线程适合大量阻塞 I/O 任务，能降低等待期间的平台线程成本；数据库连接、锁和服务容量没有变大，因此仍需连接池、超时、限流和背压。
+
+### 5. Java 服务内存持续上涨时应如何开始诊断？
+
+先观察 GC 后存活对象和各内存区域趋势，再用 JFR、类直方图或受控堆转储寻找主要对象及引用链，重点检查无界缓存、静态集合、监听器、ThreadLocal 和连接资源。
+
 ## 复习清单
 
 - [ ] 能正确选择集合类型
 - [ ] 能解释 equals / hashCode 契约
 - [ ] 能设计异常边界和资源释放
 - [ ] 能说明 JVM、反射与代理的基本工作方式
+
+## 官方文档与延伸阅读
+
+- [Dev.java：Learn Java](https://dev.java/learn/) - Java 语言与现代 API 学习路径。
+- [Java SE 21 Documentation](https://docs.oracle.com/en/java/javase/21/) - 标准库、工具和 JVM 文档。
+- [Virtual Threads](https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html) - 虚拟线程的适用场景与限制。
+- [Java Flight Recorder](https://docs.oracle.com/en/java/javase/21/jfapi/) - JFR API 与诊断能力。
+- [JDK Mission Control](https://www.oracle.com/java/technologies/jdk-mission-control.html) - JFR 分析工具。
 
 ## 原始资料索引
 

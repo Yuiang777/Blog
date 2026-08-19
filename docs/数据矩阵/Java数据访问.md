@@ -1024,6 +1024,224 @@ Page是一个ArrayListList。之所以可以强转类型，Page就是List接口�
 
 PageInfo是一个对象，能获取到的数据比Page多；
 
+## Java 数据访问工程补充
+
+### 数据访问层的职责
+
+Repository 或 Mapper 负责持久化转换和查询，不承担完整业务流程。Service 负责事务、权限和业务规则。Controller 不应直接拼 SQL 或操作 Mapper。
+
+```text
+Controller -> Application Service -> Repository interface -> MyBatis/JDBC adapter
+```
+
+查询模型和写模型可以不同。复杂列表直接返回专用 DTO，避免加载完整领域对象后再做大量 N+1 查询。
+
+## JDBC 正确使用
+
+### 资源与参数
+
+```java
+String sql = """
+    SELECT id, order_no, status, amount
+    FROM orders
+    WHERE user_id = ? AND created_at >= ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT ?
+    """;
+
+try (Connection connection = dataSource.getConnection();
+     PreparedStatement statement = connection.prepareStatement(sql)) {
+    statement.setLong(1, userId);
+    statement.setTimestamp(2, Timestamp.from(since));
+    statement.setInt(3, Math.min(limit, 100));
+    statement.setQueryTimeout(3);
+
+    try (ResultSet results = statement.executeQuery()) {
+        while (results.next()) {
+            // 显式映射需要的列
+        }
+    }
+}
+```
+
+所有外部值使用占位符绑定。表名、列名和排序方向不能参数化时，必须通过服务端白名单映射，不能直接拼接用户字符串。
+
+### 批量写入
+
+```java
+try (PreparedStatement statement = connection.prepareStatement(
+        "INSERT INTO order_item(order_id, sku_id, quantity) VALUES (?, ?, ?)")) {
+    for (OrderItem item : items) {
+        statement.setLong(1, orderId);
+        statement.setLong(2, item.skuId());
+        statement.setInt(3, item.quantity());
+        statement.addBatch();
+    }
+    int[] counts = statement.executeBatch();
+}
+```
+
+批量大小需要限制，过大会增加事务、日志、内存和锁竞争。执行后检查返回结果和异常链。
+
+## 连接池
+
+连接池容量不是越大越好。总连接数由“实例数 × 每实例池上限”决定，必须低于数据库可承受范围并预留管理连接。
+
+关键参数：
+
+- 最大连接数与最小空闲连接。
+- 获取连接超时。
+- 连接最大生命周期，略短于服务端或网络空闲回收时间。
+- 泄漏检测只在排查时谨慎启用。
+- 连接验证与初始化 SQL。
+
+监控活跃、空闲、等待线程和获取耗时。连接池满通常是慢 SQL、长事务、连接泄漏或数据库变慢的结果，不应只靠扩大池子掩盖。
+
+## MyBatis 映射设计
+
+### 显式 ResultMap
+
+```xml
+<resultMap id="OrderResultMap" type="com.example.order.Order">
+  <id property="id" column="id" />
+  <result property="orderNo" column="order_no" />
+  <result property="status" column="status" javaType="com.example.order.OrderStatus" />
+  <result property="amount" column="amount" />
+</resultMap>
+```
+
+复杂查询明确列别名和映射，避免 `SELECT *`。枚举、JSON、加密字段和特殊时间类型使用经过测试的 TypeHandler。
+
+### 动态 SQL 安全
+
+```xml
+<select id="findPage" resultMap="OrderResultMap">
+  SELECT id, order_no, user_id, status, amount, created_at
+  FROM orders
+  <where>
+    user_id = #{query.userId}
+    <if test="query.status != null">
+      AND status = #{query.status}
+    </if>
+    <if test="query.since != null">
+      AND created_at >= #{query.since}
+    </if>
+  </where>
+  ORDER BY created_at DESC, id DESC
+  LIMIT #{query.limit}
+</select>
+```
+
+`#{}` 生成参数绑定；`${}` 是原样文本替换。排序字段可在 Java 层映射为枚举，或在 XML 使用 `choose` 输出固定列名。
+
+### 更新要检查影响行数
+
+```java
+int changed = orderMapper.markPaid(orderId, expectedVersion, paidAt);
+if (changed == 0) {
+    throw new OptimisticLockException("订单状态已变化");
+}
+```
+
+忽略影响行数会把不存在、状态冲突和并发覆盖当作成功。
+
+## N+1 与批量加载
+
+以下模式会产生 N+1：先查订单列表，再循环查询每个订单明细。解决方案：
+
+1. 一次 join 后在内存按订单分组。
+2. 先查询订单 ID，再用 `IN` 批量查询明细。
+3. 对列表页使用专用扁平查询 DTO。
+4. 使用按请求范围的 DataLoader 合并查询。
+
+```xml
+<select id="findItemsByOrderIds" resultType="OrderItemRow">
+  SELECT id, order_id, sku_id, quantity
+  FROM order_item
+  WHERE order_id IN
+  <foreach collection="orderIds" item="id" open="(" separator="," close=")">
+    #{id}
+  </foreach>
+</select>
+```
+
+IN 列表同样要限制大小，大批量可分片或使用临时表。
+
+## 分页与排序
+
+### Offset 分页
+
+适合后台浅分页和需要页码的场景，但深分页扫描成本高。PageHelper 依赖线程上下文，调用 `startPage` 后紧接目标查询，避免中间执行其他 SQL。
+
+### 游标分页
+
+```sql
+SELECT id, order_no, created_at
+FROM orders
+WHERE user_id = ?
+  AND (created_at, id) < (?, ?)
+ORDER BY created_at DESC, id DESC
+LIMIT ?;
+```
+
+游标包含完整稳定排序键。不能只使用可能重复的 `created_at`，否则会漏行或重复。
+
+## 事务、锁与重试
+
+### 事务只包围本地一致性
+
+```java
+@Transactional
+public void transfer(TransferCommand command) {
+    accountMapper.lockInOrder(command.accountIdsSorted());
+    accountMapper.debit(command.fromId(), command.amount());
+    accountMapper.credit(command.toId(), command.amount());
+    transferMapper.insert(command.toRecord());
+}
+```
+
+事务内不等待邮件、HTTP 或消息代理。需要跨系统通知时写 Outbox，在提交后异步发布。
+
+### 隔离级别与锁
+
+默认隔离级别不等于所有并发问题自动解决。先明确不变量，再选择：条件更新、乐观锁、`SELECT ... FOR UPDATE`、唯一约束或串行化。
+
+### 重试边界
+
+死锁、连接重置等错误有时可以重试，但重试单元必须覆盖整个事务并确保幂等。不能只重试事务中的最后一条 SQL。
+
+## 数据库迁移
+
+推荐使用 Flyway、Liquibase 等工具版本化管理 schema：
+
+```text
+V20260819_01__add_article_visibility.sql
+V20260819_02__create_event_outbox.sql
+```
+
+生产迁移原则：
+
+- 先新增可空列或有安全默认值的列。
+- 新旧应用同时兼容一段时间。
+- 数据回填分批、限速并可恢复。
+- 切换读写后再删除旧列。
+- 大表 DDL 评估锁、临时空间和复制延迟。
+
+不要在应用启动时由 ORM 自动修改生产 schema。
+
+## 测试与观测
+
+### 测试
+
+- Mapper 测试使用真实数据库行为，不用纯 mock 证明 SQL 正确。
+- Testcontainers 可提供接近生产版本的临时数据库。
+- 覆盖 NULL、时区、字符集、唯一约束、并发更新和事务回滚。
+- 为关键 SQL 保存执行计划基线和典型数据量测试。
+
+### 观测
+
+记录 SQL 模板标识、耗时、返回/影响行数和 trace ID，不记录密码和完整敏感参数。监控连接池等待、慢 SQL、锁等待、死锁、事务时长和数据库错误率。
+
 ## 综合示例
 
 ### 综合示例：安全的动态查询
@@ -1058,6 +1276,8 @@ PageInfo是一个对象，能获取到的数据比Page多；
 1. 什么时候才可以使用 `${}`？
 2. PageHelper 使用时要注意什么？
 3. 如何定位 N+1 查询？
+4. 连接池长期满载时为什么不应先直接扩大连接数？
+5. 游标分页为什么需要包含完整稳定排序键？
 
 ## 参考答案
 
@@ -1073,12 +1293,29 @@ PageInfo是一个对象，能获取到的数据比Page多；
 
 打开 SQL 日志或链路指标，观察一次请求是否重复执行相似 SQL；改用批量查询、JOIN 或一次性加载后组装。
 
+### 4. 连接池长期满载时为什么不应先直接扩大连接数？
+
+满载通常来自慢 SQL、长事务、连接泄漏或数据库变慢。直接扩容会把更多并发压向数据库，可能进一步恶化。应先分析连接等待、事务时间、慢查询和数据库容量。
+
+### 5. 游标分页为什么需要包含完整稳定排序键？
+
+若只用可能重复的时间列，多条记录位于同一时间点时会漏行或重复。游标应包含时间和唯一 ID，并与 `ORDER BY` 和联合索引保持一致。
+
 ## 复习清单
 
 - [ ] 能写安全的预编译查询
 - [ ] 能设计结果映射和动态 SQL
 - [ ] 能正确使用事务、连接池和分页
 - [ ] 能识别 SQL 注入、N+1 与批处理问题
+
+## 官方文档与延伸阅读
+
+- [JDBC Basics](https://docs.oracle.com/javase/tutorial/jdbc/basics/) - 连接、语句、结果集和事务基础。
+- [MyBatis 3](https://mybatis.org/mybatis-3/) - Mapper、动态 SQL、ResultMap 与配置。
+- [MyBatis-Plus](https://baomidou.com/) - CRUD、分页、插件和扩展能力。
+- [HikariCP](https://github.com/brettwooldridge/HikariCP) - 连接池配置与运行行为。
+- [Flyway Documentation](https://documentation.red-gate.com/flyway) - 数据库迁移版本管理。
+- [Testcontainers JDBC](https://java.testcontainers.org/modules/databases/jdbc/) - 数据访问集成测试。
 
 ## 原始资料索引
 

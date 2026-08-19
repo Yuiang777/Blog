@@ -1453,6 +1453,223 @@ Test::More 是 perl-Test-Simple 的一部分，因此安装后应该会解决依
 
 两个命令都可以，执行完成后进入/etc/yum.repos.d
 
+## MySQL 工程实践补充
+
+### 表设计先确定访问模式
+
+建表前回答：核心查询是什么、按什么条件过滤、如何排序、数据保留多久、写入量和增长量多大。索引来自访问模式，不是建完表后随意添加。
+
+```sql
+CREATE TABLE orders (
+    id             BIGINT UNSIGNED NOT NULL,
+    order_no       VARCHAR(32)     NOT NULL,
+    user_id        BIGINT UNSIGNED NOT NULL,
+    status         TINYINT         NOT NULL,
+    payable_amount DECIMAL(12, 2)  NOT NULL,
+    version        INT UNSIGNED    NOT NULL DEFAULT 0,
+    created_at     DATETIME(3)     NOT NULL,
+    updated_at     DATETIME(3)     NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_orders_order_no (order_no),
+    KEY idx_orders_user_created (user_id, created_at DESC, id DESC),
+    CONSTRAINT ck_orders_amount CHECK (payable_amount >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+```
+
+- 主键短、稳定且单调增长通常更利于 InnoDB 聚簇索引。
+- 金额使用 `DECIMAL` 或最小货币单位整数，不使用浮点数。
+- 时间精度、时区和序列化策略在系统内统一。
+- 状态字段要有清晰枚举语义，避免魔法数字散落业务代码。
+- `utf8mb4` 支持完整 Unicode，排序规则按大小写和业务需求选择。
+
+### NULL 与默认值
+
+NULL 表示未知或不适用，不等于空字符串和零。是否允许 NULL 由领域语义决定。不要为了“所有字段都非空”填入虚假日期或无意义的 0。
+
+## InnoDB、MVCC 与锁
+
+### MVCC 读视图
+
+InnoDB 通过隐藏事务信息、undo log 和 Read View 为一致性读提供历史版本。普通 `SELECT` 通常是快照读；`SELECT ... FOR UPDATE` 是当前读并加锁。
+
+在可重复读隔离级别中，同一事务内的快照读通常看到一致版本；当前读需要读取最新可见数据并参与锁竞争。不要把“可重复读”误解为所有查询都永远不阻塞。
+
+### 常见锁
+
+- Record Lock：锁索引记录。
+- Gap Lock：锁索引区间，不锁具体记录。
+- Next-Key Lock：记录锁与间隙锁组合。
+- Intention Lock：表级意向锁，表示事务计划加行锁。
+- Metadata Lock：保护表结构和访问的一致性。
+
+锁基于索引。条件没有合适索引时，扫描和锁定范围可能远大于预期。
+
+### 转账事务
+
+```sql
+START TRANSACTION;
+
+SELECT id, balance
+FROM account
+WHERE id IN (101, 202)
+ORDER BY id
+FOR UPDATE;
+
+UPDATE account SET balance = balance - 100.00 WHERE id = 101 AND balance >= 100.00;
+UPDATE account SET balance = balance + 100.00 WHERE id = 202;
+
+INSERT INTO transfer_log(transfer_no, from_id, to_id, amount, created_at)
+VALUES ('T20260819001', 101, 202, 100.00, NOW(3));
+
+COMMIT;
+```
+
+统一加锁顺序可减少死锁，转账号使用唯一约束保证幂等。每条更新都要检查受影响行数。
+
+### 死锁处理
+
+死锁是并发系统正常需要处理的失败类型：
+
+```sql
+SHOW ENGINE INNODB STATUS;
+```
+
+应用捕获死锁错误后，仅对幂等事务做有限重试并增加随机退避。根因修复通常是统一加锁顺序、缩短事务、补充索引和减少一次事务处理的数据量。
+
+## 索引设计
+
+### 联合索引
+
+联合索引 `(user_id, status, created_at)` 能否使用取决于查询条件、范围和排序。左侧列约束后，后续列更可能继续参与定位或排序；出现范围条件后，后续列通常不能继续缩小扫描范围，但仍可能用于覆盖。
+
+```sql
+SELECT id, order_no, payable_amount, created_at
+FROM orders
+WHERE user_id = ? AND status = ?
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+
+可考虑索引 `(user_id, status, created_at DESC, id DESC)`，再通过真实数据量和执行计划验证。
+
+### 覆盖索引
+
+查询所需列全部在索引中时，可以减少回表。但把大量宽字段塞入索引会增加空间、写放大和缓存压力。索引不是越“覆盖”越好。
+
+### 低选择性列
+
+单独给布尔或少量状态值建索引往往收益有限。与租户、用户或时间组合后才可能有效。优化器是否选择索引还取决于统计信息和预计行数。
+
+### 前缀与函数
+
+```sql
+WHERE DATE(created_at) = '2026-08-19'
+```
+
+对索引列做函数运算可能阻止普通索引范围查找，改成：
+
+```sql
+WHERE created_at >= '2026-08-19 00:00:00'
+  AND created_at <  '2026-08-20 00:00:00'
+```
+
+也可根据固定表达式设计生成列或函数索引，但要评估写入成本。
+
+## 执行计划与诊断
+
+### EXPLAIN ANALYZE
+
+MySQL 8 可以执行查询并展示实际耗时和行数：
+
+```sql
+EXPLAIN ANALYZE
+SELECT user_id, SUM(payable_amount)
+FROM orders
+WHERE status = 3
+  AND created_at >= NOW() - INTERVAL 30 DAY
+GROUP BY user_id;
+```
+
+重点比较优化器估算行数与实际行数。偏差很大可能来自统计信息过期、数据倾斜、条件相关性或表达式难以估算。
+
+### 诊断顺序
+
+1. 获取慢 SQL、参数范围和业务频率。
+2. 确认返回行数是否合理，是否一次取太多数据。
+3. 查看执行计划的访问类型、扫描行数、连接顺序和临时表。
+4. 检查索引是否匹配过滤、连接和排序。
+5. 观察锁等待、磁盘 I/O、Buffer Pool 和并发量。
+6. 在接近生产分布的数据上验证改写前后结果和耗时。
+
+只在小测试表上执行一次查询，不能证明生产优化有效。
+
+### 慢查询与 Performance Schema
+
+慢日志适合找到高耗时 SQL；Performance Schema 和 `sys` 库可按总耗时、平均耗时、扫描行数和等待类型聚合。优化优先处理总影响最大的查询，而不是只处理单次最慢的一条。
+
+## 查询优化模式
+
+### Keyset 分页
+
+深分页：
+
+```sql
+SELECT id, title
+FROM article
+ORDER BY created_at DESC, id DESC
+LIMIT 100000, 20;
+```
+
+数据库仍需跳过大量行。使用上页最后位置：
+
+```sql
+SELECT id, title, created_at
+FROM article
+WHERE (created_at, id) < (?, ?)
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+
+排序键必须稳定且有对应联合索引。
+
+### 批量操作
+
+大量单行 insert 会产生频繁往返。使用合理批量、预编译和事务，但单批不能过大，否则会增加锁、日志、内存和复制延迟。
+
+### 避免无边界查询
+
+管理后台导出也应分页、异步和限流。`SELECT *` 增加网络、反序列化和回表成本，也使接口依赖不需要的列。
+
+## 复制、备份与恢复
+
+### 复制不是备份
+
+主库误删数据会复制到从库。备份需要独立保存、保留多个时间点并定期恢复演练。
+
+### 备份目标
+
+- RPO：最多允许丢失多少数据。
+- RTO：故障后多久恢复服务。
+- 全量备份周期与增量/binlog 保留。
+- 备份加密、访问权限和异地存储。
+- 恢复到指定时间点的步骤与验证。
+
+没有经过恢复演练的备份，只能算“存在一些文件”。
+
+### 读写分离注意事项
+
+复制通常存在延迟。用户写入后立即读取可能在从库看不到。关键读可以走主库、携带一致性标记或等待复制位点；不能简单认为所有 SELECT 都能安全发到从库。
+
+## 生产运行检查
+
+- 连接池总连接数不超过数据库承载能力。
+- 事务短小，无长时间空闲事务。
+- 慢 SQL、锁等待、死锁和复制延迟有监控。
+- Buffer Pool 命中、磁盘延迟和 redo 写入趋势稳定。
+- schema 变更使用在线策略并评估锁表风险。
+- 账号最小权限，应用不使用 root。
+- 备份、binlog 和恢复流程定期演练。
+
 ## 综合示例
 
 ### 综合示例：订单表设计与聚合查询
@@ -1495,6 +1712,8 @@ LIMIT 20;
 1. 为什么示例索引 `(user_id, created_at)` 不一定适合给定聚合查询？
 2. 设计转账事务的关键步骤。
 3. `WHERE` 与 `HAVING` 的区别是什么？
+4. `EXPLAIN ANALYZE` 中估算行数和实际行数差距很大说明什么？
+5. 读写分离场景如何处理“刚写完立即读取”？
 
 ## 参考答案
 
@@ -1510,12 +1729,28 @@ LIMIT 20;
 
 WHERE 在分组前过滤行；HAVING 在 GROUP BY 后过滤聚合结果。能前置到 WHERE 的条件通常应前置。
 
+### 4. `EXPLAIN ANALYZE` 中估算行数和实际行数差距很大说明什么？
+
+说明优化器对数据分布判断不准，可能是统计信息过期、数据倾斜、条件相关性或表达式难以估算。应更新或检查统计信息、调整查询和索引，再比较新计划。
+
+### 5. 读写分离场景如何处理“刚写完立即读取”？
+
+关键读短时间走主库，或携带写入位点并等待从库追上，也可让接口直接返回写入结果。不能默认异步复制从库具备立即一致性。
+
 ## 复习清单
 
 - [ ] 能写出清晰的 CRUD 和多表查询
 - [ ] 能设计主键、外键、唯一约束和字段类型
 - [ ] 能解释 ACID 与隔离级别
 - [ ] 能读取 EXPLAIN 并验证索引效果
+
+## 官方文档与延伸阅读
+
+- [MySQL 8.4 Reference Manual](https://dev.mysql.com/doc/refman/8.4/en/) - SQL、InnoDB 与服务器运维总入口。
+- [InnoDB Transaction Model](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-model.html) - MVCC、隔离级别和锁。
+- [EXPLAIN ANALYZE](https://dev.mysql.com/doc/refman/8.4/en/explain.html) - 执行计划与实际运行统计。
+- [Optimization](https://dev.mysql.com/doc/refman/8.4/en/optimization.html) - 索引、查询和服务器优化。
+- [Backup and Recovery](https://dev.mysql.com/doc/refman/8.4/en/backup-and-recovery.html) - 备份、恢复与时间点恢复。
 
 ## 原始资料索引
 

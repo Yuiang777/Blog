@@ -1726,6 +1726,302 @@ github:
 
 ```
 
+## Go 现代工程补充
+
+### Module 与目录边界
+
+使用 Module 管理依赖：
+
+```bash
+go mod init example.com/applesheep/service
+go mod tidy
+go mod verify
+```
+
+中小服务不必照搬复杂目录模板。常见结构：
+
+```text
+cmd/api/main.go          进程入口与依赖装配
+internal/order/          订单业务，只允许当前模块导入
+internal/platform/       数据库、HTTP 客户端等适配
+api/                     OpenAPI 或 protobuf 契约
+migrations/              数据库迁移
+```
+
+包名表达能力，不使用 `utils`、`common` 收纳所有内容。依赖方向从入口到业务接口，再到基础设施实现。
+
+### 配置与启动
+
+```go
+type Config struct {
+	HTTPAddr       string
+	DatabaseURL    string
+	RequestTimeout time.Duration
+}
+
+func LoadConfig() (Config, error) {
+	addr := envOrDefault("HTTP_ADDR", ":8080")
+	timeout, err := time.ParseDuration(envOrDefault("REQUEST_TIMEOUT", "2s"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse request timeout: %w", err)
+	}
+	return Config{HTTPAddr: addr, DatabaseURL: os.Getenv("DATABASE_URL"), RequestTimeout: timeout}, nil
+}
+```
+
+关键配置缺失时启动失败。不要把密码写入默认值、日志或仓库。
+
+## 错误设计
+
+### 包装与判断
+
+```go
+var ErrOrderNotFound = errors.New("order not found")
+
+func (s *Service) Get(ctx context.Context, id int64) (Order, error) {
+	order, err := s.repo.Find(ctx, id)
+	if err != nil {
+		return Order{}, fmt.Errorf("find order %d: %w", id, err)
+	}
+	return order, nil
+}
+```
+
+用 `%w` 保留错误链；调用方使用 `errors.Is` 和 `errors.As` 判断，不匹配错误字符串。
+
+```go
+if errors.Is(err, ErrOrderNotFound) {
+	http.Error(w, "order not found", http.StatusNotFound)
+	return
+}
+```
+
+错误只在合适边界记录一次。底层返回上下文，高层决定响应、重试和日志级别。
+
+### panic 的边界
+
+panic 用于不可恢复的程序错误，不用于普通业务失败。HTTP 服务可以在最外层 recover，记录堆栈并返回 500，但不能假装请求成功。
+
+## Context 与取消
+
+`context.Context` 作为第一个参数传递，不存进结构体，也不传 nil：
+
+```go
+func (s *Service) Create(ctx context.Context, cmd CreateOrder) (Order, error) {
+	ctx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+	defer cancel()
+	return s.repo.Insert(ctx, cmd)
+}
+```
+
+超时从入口向下传播。下游预算要小于上游剩余时间。只在 context 中保存请求级元数据，例如 trace ID，不保存可选业务参数。
+
+## 并发与所有权
+
+### 谁创建，谁负责结束
+
+启动 goroutine 前明确：
+
+- 它在什么条件下退出？
+- 谁发送取消信号？
+- 错误返回给谁？
+- channel 由谁关闭？
+- 最多同时运行多少个？
+
+没有退出路径的 goroutine 会泄漏并长期持有连接、计时器和内存。
+
+### Channel 所有权
+
+发送方负责关闭 channel，接收方不应关闭。关闭表示“不会再有数据”，不是用来广播任意状态。
+
+```go
+func generate(ctx context.Context, values []int) <-chan int {
+	out := make(chan int)
+	go func() {
+		defer close(out)
+		for _, value := range values {
+			select {
+			case out <- value:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+```
+
+### 有界 worker pool
+
+```go
+func runWorkers(ctx context.Context, jobs <-chan Job, workers int) error {
+	group, ctx := errgroup.WithContext(ctx)
+	for i := 0; i < workers; i++ {
+		group.Go(func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case job, ok := <-jobs:
+					if !ok {
+						return nil
+					}
+					if err := process(ctx, job); err != nil {
+						return err
+					}
+				}
+			}
+		})
+	}
+	return group.Wait()
+}
+```
+
+并发数根据下游容量设置，不根据“机器线程很多”无限增加。
+
+### 锁与 map
+
+普通 map 不能并发读写。简单共享状态可用 `sync.Mutex`：
+
+```go
+type Counter struct {
+	mu     sync.Mutex
+	values map[string]int64
+}
+
+func (c *Counter) Add(key string, delta int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.values[key] += delta
+}
+```
+
+锁保护的是不变量，不是某一行代码。持锁时避免网络 I/O。`sync.Map` 只适合特定访问模式，不能替代对数据模型的设计。
+
+## HTTP 服务实践
+
+### Server 超时
+
+```go
+server := &http.Server{
+	Addr:              cfg.HTTPAddr,
+	Handler:           routes,
+	ReadHeaderTimeout: 3 * time.Second,
+	ReadTimeout:       10 * time.Second,
+	WriteTimeout:      15 * time.Second,
+	IdleTimeout:       60 * time.Second,
+}
+```
+
+生产服务不能只调用 `http.ListenAndServe` 使用无限默认超时。还要限制请求体大小、校验 Content-Type 并设置并发和速率保护。
+
+### JSON 边界
+
+```go
+decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+decoder.DisallowUnknownFields()
+if err := decoder.Decode(&request); err != nil {
+	writeError(w, http.StatusBadRequest, "INVALID_JSON")
+	return
+}
+```
+
+公开 API 明确未知字段策略和时间格式。不要直接把数据库实体作为请求与响应模型。
+
+### 优雅停机
+
+```go
+signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+defer stop()
+
+<-signalCtx.Done()
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+defer cancel()
+if err := server.Shutdown(shutdownCtx); err != nil {
+	log.Error("shutdown server", "error", err)
+}
+```
+
+停机时停止接收新流量，等待在途请求，在截止时间内关闭数据库、消费者和后台任务。
+
+## 数据访问
+
+`database/sql` 的 `sql.DB` 是连接池，不是单个连接：
+
+```go
+db.SetMaxOpenConns(30)
+db.SetMaxIdleConns(10)
+db.SetConnMaxLifetime(30 * time.Minute)
+db.SetConnMaxIdleTime(5 * time.Minute)
+```
+
+所有查询传入 context，检查 `rows.Err()` 并及时关闭：
+
+```go
+rows, err := db.QueryContext(ctx, query, status)
+if err != nil {
+	return nil, fmt.Errorf("query orders: %w", err)
+}
+defer rows.Close()
+
+for rows.Next() {
+	// scan
+}
+if err := rows.Err(); err != nil {
+	return nil, fmt.Errorf("iterate orders: %w", err)
+}
+```
+
+事务只包含必要数据库操作，不在事务中等待外部 HTTP。
+
+## 测试与诊断
+
+### 表驱动测试
+
+```go
+func TestNormalizeName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "trim", in: "  AppleSheep ", want: "AppleSheep"},
+		{name: "empty", in: "   ", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeName(tt.in); got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+```
+
+### 并发与性能检查
+
+```bash
+go test ./...
+go test -race ./...
+go test -coverprofile=coverage.out ./...
+go test -bench=. -benchmem ./...
+go vet ./...
+```
+
+race detector 能发现实际执行路径中的数据竞争，不能证明所有路径绝对安全。基准测试使用固定输入、预热并报告内存分配。
+
+### pprof
+
+出现 CPU、内存或 goroutine 异常时采集 profile：
+
+```bash
+go tool pprof http://127.0.0.1:6060/debug/pprof/profile?seconds=30
+go tool pprof http://127.0.0.1:6060/debug/pprof/heap
+```
+
+诊断端点只在受保护的管理网络开放。先观察指标和 profile，再进行优化。
+
 ## 综合示例
 
 ### 综合示例：可取消的并发任务
@@ -1767,6 +2063,8 @@ func run(ctx context.Context, jobs <-chan int) <-chan int {
 1. 把示例扩展为固定数量的 worker pool。
 2. 切片的长度和容量有什么区别？
 3. 如何验证并发代码是否存在数据竞争？
+4. 启动一个 goroutine 前必须明确哪些退出条件？
+5. HTTP 服务收到 SIGTERM 后应如何优雅停机？
 
 ## 参考答案
 
@@ -1782,12 +2080,29 @@ func run(ctx context.Context, jobs <-chan int) <-chan int {
 
 运行 `go test -race ./...`，同时让测试覆盖多 goroutine 的读写路径。
 
+### 4. 启动一个 goroutine 前必须明确哪些退出条件？
+
+明确谁负责取消、何时结束、错误返回给谁、channel 由谁关闭以及最大并发数。循环中的发送和接收应同时监听 `ctx.Done()`，防止调用方离开后 goroutine 泄漏。
+
+### 5. HTTP 服务收到 SIGTERM 后应如何优雅停机？
+
+停止接收新流量，使用有截止时间的 context 调用 `Server.Shutdown`，等待在途请求完成，再关闭消费者、后台任务和数据库；超过截止时间后记录并强制退出。
+
 ## 复习清单
 
 - [ ] 能解释值、指针与接口语义
 - [ ] 能正确处理 error 并保留上下文
 - [ ] 能设计可退出的并发流程
 - [ ] 能编写表驱动测试并运行 race detector
+
+## 官方文档与延伸阅读
+
+- [Go Documentation](https://go.dev/doc/) - Go 官方文档入口。
+- [Effective Go](https://go.dev/doc/effective_go) - 语言习惯与工程风格。
+- [Package context](https://pkg.go.dev/context) - 取消、截止时间与请求上下文。
+- [Data Race Detector](https://go.dev/doc/articles/race_detector) - 并发数据竞争检查。
+- [Diagnostics](https://go.dev/doc/diagnostics) - pprof、trace 与运行时诊断。
+- [Go Modules Reference](https://go.dev/ref/mod) - 模块和依赖管理。
 
 ## 原始资料索引
 

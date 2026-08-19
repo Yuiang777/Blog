@@ -484,6 +484,14 @@ String prompt = """
 - [ ] 能解释切分和检索参数
 - [ ] 能建立离线评测与失败降级
 
+## 官方文档与延伸阅读
+
+- [Spring AI Reference](https://docs.spring.io/spring-ai/reference/) - 模型、向量库、RAG 与工具调用。
+- [OWASP GenAI Security Project](https://genai.owasp.org/) - Prompt Injection、数据泄露与 Agent 风险。
+- [pgvector](https://github.com/pgvector/pgvector) - PostgreSQL 向量检索扩展。
+- [OpenTelemetry Generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/) - 生成式 AI 调用的可观测语义。
+- [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) - AI 风险识别与治理框架。
+
 ## 原始资料索引
 
 - Agent 与 RAG 应用：`后端/AI/JavaAI应用开发.md`

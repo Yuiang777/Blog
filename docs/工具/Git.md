@@ -404,6 +404,14 @@ rebase 会创建新的提交 ID，其他人基于旧提交的工作会产生分�
 - [ ] 能处理合并与变基冲突
 - [ ] 能保持提交小而清晰
 
+## 官方文档与延伸阅读
+
+- [Pro Git](https://git-scm.com/book/en/v2) - Git 原理、分支、远程与内部对象。
+- [Git Reference](https://git-scm.com/docs) - 所有命令的官方参考。
+- [gitrevisions](https://git-scm.com/docs/gitrevisions) - 提交引用、父提交和范围表达式。
+- [gitreflog](https://git-scm.com/docs/git-reflog) - reflog 与误操作恢复。
+- [gitworkflows](https://git-scm.com/docs/gitworkflows) - 团队协作与维护工作流。
+
 ## 原始资料索引
 
 - Git 原理与常用流程：`工具/Git笔记.md`

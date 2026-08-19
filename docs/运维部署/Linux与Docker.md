@@ -531,6 +531,15 @@ ENTRYPOINT ["java", "-jar", "/app/app.jar"]
 - [ ] 能正确使用卷与容器网络
 - [ ] 能执行部署验证和回滚
 
+## 官方文档与延伸阅读
+
+- [Linux man-pages](https://www.kernel.org/doc/man-pages/) - Linux 系统调用和常用接口参考。
+- [systemd 官方文档](https://systemd.io/) - unit、服务生命周期、日志与项目手册入口。
+- [Docker Documentation](https://docs.docker.com/) - 镜像、容器、网络、存储和安全。
+- [Dockerfile Reference](https://docs.docker.com/reference/dockerfile/) - Dockerfile 指令与构建语义。
+- [Docker Compose Reference](https://docs.docker.com/reference/compose-file/) - Compose 服务配置。
+- [Docker Security](https://docs.docker.com/engine/security/) - daemon、容器与运行时安全。
+
 ## 原始资料索引
 
 - Linux 基础：`运维部署/Linux基础.md`

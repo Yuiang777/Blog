@@ -845,6 +845,172 @@ if (!ok) {
 
 > 图片说明：原笔记引用的 image-20221130205351403.png 未保存到仓库；相关文字知识点已保留。
 
+## Redis 工程实践补充
+
+### 按访问模式选择数据类型
+
+| 场景 | 数据类型 | 关键操作 |
+| --- | --- | --- |
+| 简单缓存、计数、位图 | String | `SET`、`INCR`、`GETBIT` |
+| 对象局部字段 | Hash | `HSET`、`HINCRBY` |
+| 队列或最近列表 | List | `LPUSH`、`BRPOP` |
+| 唯一集合、共同好友 | Set | `SADD`、`SINTER` |
+| 排行榜、延时调度 | Sorted Set | `ZADD`、`ZRANGE` |
+| 事件流、消费组 | Stream | `XADD`、`XREADGROUP` |
+| 基数估算 | HyperLogLog | `PFADD`、`PFCOUNT` |
+
+数据类型决定复杂度和内存模型。不要把所有对象都序列化成一个巨大 JSON String，也不要为了局部查询把一个对象拆成成千上万个 key。
+
+### Key 设计
+
+推荐结构：
+
+```text
+环境:业务:实体:标识:版本
+prod:note:detail:10086:v2
+prod:user:1024:recent-notes
+```
+
+- key 可读但不过长。
+- 明确租户、环境和版本边界。
+- 大部分缓存 key 设置 TTL。
+- 集群多 key 原子操作需要使用相同 hash tag，例如 `{order:1001}:stock`。
+- 禁止在线使用 `KEYS *` 扫描大库，使用 `SCAN` 分批遍历。
+
+## 缓存一致性
+
+### Cache Aside
+
+常见读流程：先读缓存，未命中读数据库，再写缓存。写流程：先提交数据库，再删除缓存。
+
+```java
+@Transactional
+public void updateNote(UpdateNote command) {
+    noteRepository.update(command);
+    transactionSynchronization.afterCommit(() ->
+        redisTemplate.delete("note:detail:" + command.id())
+    );
+}
+```
+
+删除应在事务提交后进行，否则数据库回滚但缓存已失效。极端竞态仍可能产生短暂旧值，需要根据一致性要求选择延迟双删、binlog 订阅、版本号或直接绕过缓存。
+
+### 穿透、击穿与雪崩
+
+- 穿透：查询不存在数据。使用参数校验、空值短缓存或布隆过滤器。
+- 击穿：热点 key 失效，大量请求同时回源。使用互斥重建、逻辑过期或提前刷新。
+- 雪崩：大量 key 同时失效或 Redis 整体不可用。TTL 加随机抖动，分批预热，并保护数据库回源容量。
+
+缓存失效方案必须有等待上限和降级，不能让所有线程无限等待重建锁。
+
+### 防止旧值覆盖新值
+
+并发回源时，慢请求可能最后写入旧数据。可在缓存值中携带数据库版本或更新时间，只允许较新版本覆盖；或者由单一重建者写入。
+
+## 原子操作与 Lua
+
+单条 Redis 命令是原子的，但多条命令组合不是：
+
+```lua
+local stock = tonumber(redis.call('GET', KEYS[1]) or '-1')
+if stock < tonumber(ARGV[1]) then
+  return 0
+end
+redis.call('DECRBY', KEYS[1], ARGV[1])
+redis.call('SADD', KEYS[2], ARGV[2])
+return 1
+```
+
+Lua 脚本执行期间会阻塞其他命令，脚本必须短小、确定、无大范围扫描。业务数据库最终状态仍需幂等和补偿，Redis 原子不等于跨系统事务。
+
+## 分布式锁边界
+
+安全的最小锁：
+
+```text
+SET lock:order:1001 <random-token> NX PX 10000
+```
+
+释放时使用 Lua 比较 token 后删除，防止删掉其他客户端续租后的锁。还要考虑：
+
+- 业务执行超过租约，需要续期或更长的安全期限。
+- 客户端长时间停顿，锁过期后旧客户端仍可能继续操作。
+- Redis 故障切换可能带来锁安全窗口。
+- 关键写入使用数据库唯一约束、版本号或 fencing token 作为最终防线。
+
+如果数据库已经能通过条件更新解决并发，不必为了“分布式”额外引入锁。
+
+## 大 Key 与热 Key
+
+### 大 Key 风险
+
+大 String、超大 Hash/List/Set/ZSet 会导致：
+
+- 单命令耗时和网络传输增加。
+- 删除时阻塞主线程。
+- 迁移、持久化和复制压力增大。
+- 集群内存分布不均。
+
+使用 `MEMORY USAGE`、`SCAN` 和离线分析识别。删除大 key 使用 `UNLINK` 异步释放内存，并将数据按业务边界拆分。
+
+### 热 Key 风险
+
+少量 key 承受大部分请求会压垮单个分片。可使用本地缓存、请求合并、只读副本、key 分片或业务降级。分片计数需要处理聚合误差和一致性。
+
+## 持久化与高可用
+
+### RDB 与 AOF
+
+| 方式 | 优点 | 代价 |
+| --- | --- | --- |
+| RDB | 文件紧凑、恢复快 | 两次快照间数据可能丢失 |
+| AOF | 可配置更小数据损失窗口 | 文件和写放大更大 |
+| 混合持久化 | 兼顾恢复速度与增量日志 | 配置和运维更复杂 |
+
+根据 RPO、RTO 和数据是否可从数据库重建选择。持久化文件同样需要备份与恢复演练。
+
+### Sentinel 与 Cluster
+
+- Sentinel 提供主从监控和自动故障转移，数据仍主要在一个主节点。
+- Cluster 将 key 分布到多个 hash slot，实现水平扩展和分片高可用。
+- Cluster 不支持任意跨 slot 多 key 操作，事务和 Lua 也受 slot 限制。
+
+故障转移不是零数据丢失。异步复制存在延迟，客户端也需要正确刷新拓扑并处理重试。
+
+## 内存与淘汰
+
+设置 `maxmemory` 和与业务匹配的淘汰策略：
+
+- `noeviction`：内存满后写入失败，适合不能静默丢数据的用途。
+- `allkeys-lru` / `allkeys-lfu`：从全部 key 中淘汰。
+- `volatile-*`：只淘汰设置 TTL 的 key。
+
+Redis 内存还包含复制缓冲区、客户端缓冲区、AOF 和碎片，不能只看 key 数据大小。监控 `used_memory`、`used_memory_rss` 和碎片率。
+
+## 可观测性与排错
+
+```bash
+redis-cli INFO memory
+redis-cli INFO stats
+redis-cli INFO replication
+redis-cli SLOWLOG GET 20
+redis-cli LATENCY DOCTOR
+```
+
+重点指标：命中率、QPS、P95/P99 延迟、连接数、拒绝连接、内存、淘汰、过期、主从延迟、持久化耗时和集群状态。
+
+`MONITOR` 会输出全部命令，生产高流量环境开销和敏感信息风险都很高，只在受控排查中短时使用。
+
+## 生产检查清单
+
+- Redis 只监听受信网络并启用认证与 ACL。
+- 客户端设置连接、命令超时和有界连接池。
+- key 有命名规范、TTL 和容量上限。
+- 缓存不可用时数据库有回源保护。
+- 锁、库存和消费处理具备最终幂等保障。
+- 大 key、热 key、慢命令和内存趋势有监控。
+- 高可用、备份和恢复经过实际演练。
+
 ## 综合示例
 
 ### 综合示例：原子扣减库存
@@ -876,6 +1042,8 @@ return stock - count
 1. 设计缓存穿透防护。
 2. 安全释放分布式锁需要什么条件？
 3. RDB 与 AOF 的主要取舍是什么？
+4. 大 key 与热 key 的主要风险和处理方式分别是什么？
+5. 为什么 Redis 锁不能替代数据库最终并发约束？
 
 ## 参考答案
 
@@ -891,12 +1059,29 @@ return stock - count
 
 RDB 紧凑、恢复快但可能丢失快照间数据；AOF 数据更完整但文件和写入成本更高。生产通常结合业务目标配置。
 
+### 4. 大 key 与热 key 的主要风险和处理方式分别是什么？
+
+大 key 会增加单命令阻塞、网络、持久化和迁移成本，应拆分并用 `UNLINK` 安全删除；热 key 会让单节点过载，可用本地缓存、请求合并、副本读取或稳定分片缓解。
+
+### 5. 为什么 Redis 锁不能替代数据库最终并发约束？
+
+锁可能因租约过期、客户端停顿、故障切换或网络分区失去互斥。关键写入仍需要数据库唯一约束、版本号、条件更新或 fencing token 拒绝过期持有者。
+
 ## 复习清单
 
 - [ ] 能按访问模式选择数据结构
 - [ ] 能解释缓存击穿、穿透和雪崩
 - [ ] 能实现带所有权校验的锁
 - [ ] 能说明持久化和高可用取舍
+
+## 官方文档与延伸阅读
+
+- [Redis Documentation](https://redis.io/docs/latest/) - 数据类型、命令与管理总入口。
+- [Redis Data Types](https://redis.io/docs/latest/develop/data-types/) - 各数据结构及适用场景。
+- [Redis Persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/) - RDB、AOF 与恢复。
+- [Redis Cluster Specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/) - hash slot、故障转移和一致性边界。
+- [Distributed Locks with Redis](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/) - 分布式锁算法与安全讨论。
+- [Redis Security](https://redis.io/docs/latest/operate/oss_and_stack/management/security/) - 网络、ACL 与运行安全。
 
 ## 原始资料索引
 

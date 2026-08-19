@@ -589,6 +589,15 @@ Spring 事务通常由代理拦截，从对象内部使用 `this` 调用不会�
 - [ ] 能区分过滤器、拦截器和 AOP
 - [ ] 能正确划分事务与业务边界
 
+## 官方文档与延伸阅读
+
+- [Spring Boot Reference](https://docs.spring.io/spring-boot/reference/) - 配置、Web、Actuator 与生产能力。
+- [Spring Framework Core](https://docs.spring.io/spring-framework/reference/core.html) - IoC、Bean、AOP 和资源管理。
+- [Spring Transaction Management](https://docs.spring.io/spring-framework/reference/data-access/transaction.html) - 事务抽象与传播行为。
+- [Spring MVC](https://docs.spring.io/spring-framework/reference/web/webmvc.html) - 请求处理、校验和异常响应。
+- [Spring Security Reference](https://docs.spring.io/spring-security/reference/) - 认证、授权和 Web 安全。
+- [Testcontainers for Java](https://java.testcontainers.org/) - 使用真实依赖进行集成测试。
+
 ## 原始资料索引
 
 - Spring 容器与 Bean：`后端/SpringBoot/Spring容器与Bean.md`
